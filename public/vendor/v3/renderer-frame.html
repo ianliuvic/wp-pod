@@ -24,7 +24,7 @@
     if(message.type==='init'){var id=++serial;await activateScene(message);if(id===serial)reply('ready',{token:message.token,cached:engineCache.size>0});return}
     if(message.type==='render'&&engine){var specs=message.surfaces&&message.surfaces.length?message.surfaces:[message],payload=await Promise.all(specs.map(async function(spec){return{sideId:String(spec.sideId),cropedCanvas:await imageCanvas(spec.surface,spec.width,spec.height)}}));currentSurface=payload;var renderTask=engine.renderPreview(payload);await Promise.race([renderTask,new Promise(function(resolve){setTimeout(resolve,6000)})]);var image='';try{image=snapshot()}catch(e){}reply('rendered',{token:message.token,snapshot:image})}
   }catch(error){reply('error',{message:String(error&&error.message||error),token:message.token})}});
-  document.addEventListener('click',function(event){if(event.target&&event.target.id==='highResCanvas')return;sendHighRes()},true);
+  document.addEventListener('click',function(event){if(event.target&&event.target.id==='highResCanvas')return;reply('expand-request')},true);
   reply('loaded');
 })();
 </script></body></html>
