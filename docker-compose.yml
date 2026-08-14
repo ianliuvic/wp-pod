@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - ${POD_ASSETS_HOST_PATH:-./pod-assets}:/assets:ro
+    environment:
+      POD_ASSETS_ROOT: /assets
+    restart: unless-stopped
