@@ -14,7 +14,7 @@
     if(message.type==='init'){var id=++serial;if(engine)try{engine.clear()}catch(e){}var response=await fetch(message.sceneUrl),scenes=await response.json(),scene=scenes[message.viewId];engine=new Renderer({id:'previewCanvas',type:'fixed-size',size:500,platform:'sds',designCanvasSize:600,sceneItemRenderSize:1500});engine.CDN_PREFIX=message.cdnPrefix;await engine.initPreview({psdData:scene,designSideList:message.sides});if(id===serial)reply('ready',{token:message.token});return}
     if(message.type==='render'&&engine){var surface=await imageCanvas(message.surface,message.width,message.height);await engine.renderPreview([{sideId:String(message.sideId),cropedCanvas:surface}]);var snapshot='';try{snapshot=document.getElementById('previewCanvas').toDataURL('image/png')}catch(e){}reply('rendered',{token:message.token,snapshot:snapshot})}
   }catch(error){reply('error',{message:String(error&&error.message||error),token:message.token})}});
-  document.getElementById('previewCanvas').addEventListener('click',function(){var snapshot='';try{snapshot=this.toDataURL('image/png')}catch(e){}reply('expand',{snapshot:snapshot})});
+  document.addEventListener('click',function(){var snapshot='';try{snapshot=document.getElementById('previewCanvas').toDataURL('image/png')}catch(e){}reply('expand',{snapshot:snapshot})},true);
   reply('loaded');
 })();
 </script></body></html>
