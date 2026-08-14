@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>POD renderer runtime test</title>
+<script src="/vendor/sds-libs.dll.js"></script>
+<script src="/vendor/sds-core.dll.js"></script>
+<script src="/vendor/sds-app-runtime.js"></script>
+<script src="/vendor/sds-vetrina-chunk.js"></script>
+<script>
+  window.SDSWebpackRequire(1007);
+  document.documentElement.dataset.runtime = typeof window.SDSVetrina;
+</script>
