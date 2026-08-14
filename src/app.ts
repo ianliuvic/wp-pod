@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -14,6 +15,8 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const designs = new DesignStore();
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
   if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false });
+  const vendorRoot = path.resolve('public/vendor');
+  if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false });
 
   app.addHook('onRequest', async (request, reply) => {
     if (!config.API_KEY || request.url === '/health' || request.method === 'GET') return;
