@@ -4,6 +4,9 @@ import path from 'node:path';
 type CaptureSide = { id: string; name?: string; previewWidth?: number; previewHeight?: number; editorCanvas?: { width: number; height: number } };
 type CaptureMode = { kind: 'all' | 'single'; templateName?: string; prototypeGroupId?: string; sides?: CaptureSide[]; viewIds?: string[] };
 type Capture = { schemaVersion?: number; parentId: string; selectedProductId?: string; name?: string; detailUrl?: string; designUrl?: string; modes?: CaptureMode[] };
+type NormalizedSide = { id: string; width?: number; height?: number };
+type NormalizedMode = { name?: string; kind?: string; designSides?: NormalizedSide[] };
+type Normalized = { modes?: NormalizedMode[] };
 
 export class AssetStore {
   constructor(private readonly root: string, private readonly publicBaseUrl: string) {}
@@ -31,20 +34,28 @@ export class AssetStore {
   }
   async manifest(id: string) {
     const capture = await this.readCapture(id);
+    let normalized: Normalized | null = null;
+    try { normalized = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'normalized.json'), 'utf8')) as Normalized; } catch {}
     const modes = await Promise.all((capture.modes ?? []).map(async (mode) => {
       const sceneFile = path.join(this.productRoot(id), 'pod', 'scenes', `${mode.kind}.json`);
       let scene: unknown = null;
       try { scene = JSON.parse(await fs.readFile(sceneFile, 'utf8')); } catch {}
+      const normalizedMode = normalized?.modes?.find((item) => (item.kind ?? item.name) === mode.kind);
       return {
         kind: mode.kind,
         templateName: mode.templateName ?? null,
         prototypeGroupId: mode.prototypeGroupId ?? null,
         viewIds: mode.viewIds ?? [],
         scene,
-        sides: (mode.sides ?? []).map((side, index) => ({
-          ...side,
-          maskUrl: this.assetUrl(id, path.join('pod', 'masks', mode.kind, `${String(index + 1).padStart(2, '0')}_${side.id}.png`))
-        }))
+        sides: (mode.sides ?? []).map((side, index) => {
+          const normalizedSide = normalizedMode?.designSides?.find((item) => String(item.id) === String(side.id));
+          return {
+            ...side,
+            previewWidth: normalizedSide?.width ?? side.previewWidth,
+            previewHeight: normalizedSide?.height ?? side.previewHeight,
+            maskUrl: this.assetUrl(id, path.join('pod', 'masks', mode.kind, `${String(index + 1).padStart(2, '0')}_${side.id}.png`))
+          };
+        })
       };
     }));
     return {
