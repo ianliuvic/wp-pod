@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -13,17 +14,39 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const assetsRoot = options.assetsRoot ?? config.assetsRoot;
   const assetStore = new AssetStore(assetsRoot, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
   const designs = new DesignStore();
+  function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+    if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
+    const query = request.query as Record<string, unknown>;
+    const signature = typeof query.signature === 'string' ? query.signature : '';
+    const shop = typeof query.shop === 'string' ? query.shop.toLowerCase() : '';
+    if (!signature || shop !== config.SHOPIFY_SHOP_DOMAIN.toLowerCase()) return reply.code(401).send({ error: 'invalid_shopify_proxy_request' });
+    const message = Object.keys(query).filter((key) => key !== 'signature').sort().map((key) => `${key}=${Array.isArray(query[key]) ? (query[key] as unknown[]).join(',') : String(query[key])}`).join('');
+    const expected = crypto.createHmac('sha256', config.SHOPIFY_API_SECRET).update(message).digest('hex');
+    if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return reply.code(401).send({ error: 'invalid_shopify_proxy_signature' });
+    return null;
+  }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
   if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false });
   const vendorRoot = path.resolve('public/vendor');
   if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false });
 
   app.addHook('onRequest', async (request, reply) => {
-    if (!config.API_KEY || request.url === '/health' || request.method === 'GET') return;
+    if (request.url.startsWith('/v1/shopify/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
     if (request.headers['x-api-key'] !== config.API_KEY) return reply.code(401).send({ error: 'unauthorized' });
   });
   app.get('/health', async () => ({ status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) }));
   app.get('/v1/products', async () => ({ products: await assetStore.listProducts() }));
+  app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', async (request, reply) => {
+    const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    try { return await assetStore.manifest(request.params.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
+  });
+  app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/designs', async (request, reply) => {
+    const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    const parsed = designSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
+    try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
+    return reply.code(201).send(designs.create(parsed.data));
+  });
   app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', async (request, reply) => {
     try { return await assetStore.manifest(request.params.productId); }
     catch { return reply.code(404).send({ error: 'product_not_found' }); }
