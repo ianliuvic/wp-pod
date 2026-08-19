@@ -40,14 +40,24 @@ export class AssetStore {
     if (cached) return cached;
     let result: { id: string; previewUrl: string | null }[] = viewIds.map((viewId) => ({ id: viewId, previewUrl: null }));
     try {
-      const scene = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'scenes', `${kind}.json`), 'utf8')) as Record<string, { psdFrames?: { F?: string }[] }>;
-      result = viewIds.map((viewId) => {
-        const frames = scene?.[viewId]?.psdFrames;
-        const base = Array.isArray(frames) && frames.length ? frames[0] : null;
-        const f = base && typeof base.F === 'string' ? base.F : '';
+      const scene = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'scenes', `${kind}.json`), 'utf8')) as Record<string, { psdFrames?: Array<{ T?: string; N?: string; F?: string }> }>;
+      result = await Promise.all(viewIds.map(async (viewId) => {
+        const frames = (scene?.[viewId]?.psdFrames ?? []).filter((frame) => (frame.T ?? 'Raster') === 'Raster' && typeof frame.F === 'string' && frame.F.length > 0);
+        const candidates = frames.filter((frame) => !/highlight|shadow|高光|阴影/i.test(frame.N ?? ''));
+        const pool = candidates.length ? candidates : frames;
+        let best: { F?: string } | null = null;
+        let bestSize = -1;
+        for (const frame of pool) {
+          try {
+            const filename = (frame.F as string).replace(/\.png$/, '_600.png');
+            const stat = await fs.stat(path.join(this.productRoot(id), 'pod', 'psdlayers', filename));
+            if (stat.size > bestSize) { bestSize = stat.size; best = frame; }
+          } catch {}
+        }
+        const f = best && typeof best.F === 'string' ? best.F : '';
         const previewUrl = f ? this.assetUrl(id, path.join('pod', 'psdlayers', f.replace(/\.png$/, '_600.png'))) : null;
         return { id: viewId, previewUrl };
-      });
+      }));
     } catch {}
     this.sceneViewCache.set(cacheKey, result);
     return result;
