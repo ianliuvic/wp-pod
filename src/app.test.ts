@@ -25,6 +25,9 @@ describe('API', () => {
     expect(mode.sceneUrl).toBe('http://test.local/assets/products/123/pod/scenes/all.json');
     expect(mode.sides[0].maskUrl).toContain('/assets/products/123/pod/masks/all/01_side-1.png');
     expect(mode.sides[0].previewWidth).toBe(1042);
+    const renderer = await app.inject({ url: '/vendor/v3/renderer-frame.html' });
+    expect(renderer.statusCode).toBe(200);
+    expect(renderer.body).toContain('Number(message.sceneItemRenderSize)');
     await app.close();
   });
 });
