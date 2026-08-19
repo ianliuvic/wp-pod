@@ -10,7 +10,8 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   API_KEY: z.string().optional(),
   SHOPIFY_API_SECRET: z.string().optional(),
-  SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com')
+  SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com'),
+  DATABASE_URL: z.string().url().optional()
 });
 
 const parsed = schema.parse(process.env);

@@ -14,7 +14,8 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const app = Fastify({ logger: config.NODE_ENV !== 'test' });
   const assetsRoot = options.assetsRoot ?? config.assetsRoot;
   const assetStore = new AssetStore(assetsRoot, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
-  const designs = new DesignStore();
+  const designs = new DesignStore(config.DATABASE_URL);
+  await designs.init();
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
     if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
     const query = request.query as Record<string, unknown>;
@@ -55,7 +56,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(designs.upsert(parsed.data));
+    return reply.code(201).send(await designs.upsert(parsed.data));
   });
   app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', async (request, reply) => {
     try { return await assetStore.manifest(request.params.productId); }
@@ -65,10 +66,10 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(designs.upsert(parsed.data));
+    return reply.code(201).send(await designs.upsert(parsed.data));
   });
   app.get<{ Params: { designId: string } }>('/v1/designs/:designId', async (request, reply) => {
-    const record = designs.get(request.params.designId);
+    const record = await designs.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
   app.post('/v1/renders', async (request, reply) => {

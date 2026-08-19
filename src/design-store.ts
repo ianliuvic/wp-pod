@@ -1,15 +1,68 @@
 import { randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
 import type { Design } from './schemas.js';
 
 export type StoredDesign = { id: string; createdAt: string; updatedAt: string; design: Design };
+
 export class DesignStore {
-  private readonly records = new Map<string, StoredDesign>();
-  upsert(design: Design) {
-    const now = new Date().toISOString();
-    const id = design.id ?? randomUUID();
-    const existing = this.records.get(id);
-    const record: StoredDesign = { id, createdAt: existing?.createdAt ?? now, updatedAt: now, design };
-    this.records.set(id, record); return record;
+  private readonly pool: Pool | null;
+  private readonly memory = new Map<string, StoredDesign>();
+
+  constructor(databaseUrl?: string) {
+    this.pool = databaseUrl ? new Pool({ connectionString: databaseUrl, max: 5 }) : null;
   }
-  get(id: string) { return this.records.get(id) ?? null; }
+
+  async init() {
+    if (!this.pool) return;
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS designs (
+        id uuid PRIMARY KEY,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        design jsonb NOT NULL
+      )
+    `);
+  }
+
+  async upsert(design: Design) {
+    if (!this.pool) {
+      const now = new Date().toISOString();
+      const id = design.id ?? randomUUID();
+      const existing = this.memory.get(id);
+      const record: StoredDesign = { id, createdAt: existing?.createdAt ?? now, updatedAt: now, design };
+      this.memory.set(id, record);
+      return record;
+    }
+    const id = design.id ?? randomUUID();
+    const result = await this.pool.query(
+      `INSERT INTO designs (id, created_at, updated_at, design)
+       VALUES ($1, now(), now(), $2::jsonb)
+       ON CONFLICT (id) DO UPDATE SET design = EXCLUDED.design, updated_at = now()
+       RETURNING id, created_at, updated_at, design`,
+      [id, JSON.stringify(design)]
+    );
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      createdAt: (row.created_at as Date).toISOString(),
+      updatedAt: (row.updated_at as Date).toISOString(),
+      design: row.design as Design,
+    };
+  }
+
+  async get(id: string) {
+    if (!this.pool) return this.memory.get(id) ?? null;
+    const result = await this.pool.query(
+      'SELECT id, created_at, updated_at, design FROM designs WHERE id = $1',
+      [id]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      createdAt: (row.created_at as Date).toISOString(),
+      updatedAt: (row.updated_at as Date).toISOString(),
+      design: row.design as Design,
+    };
+  }
 }
