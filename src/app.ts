@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { ServerResponse } from 'node:http';
+import type { FastifyReply } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -28,12 +28,12 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     return null;
   }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
-    function setCacheHeaders(res: ServerResponse, filePath: string): void {
+    function setCacheHeaders(reply: FastifyReply, filePath: string): void {
     const ext = path.extname(filePath).toLowerCase();
     if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico'].includes(ext)) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     } else {
-      res.setHeader('Cache-Control', 'public, max-age=3600');
+      reply.header('Cache-Control', 'public, max-age=3600');
     }
   }
   if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false, setHeaders: setCacheHeaders });
