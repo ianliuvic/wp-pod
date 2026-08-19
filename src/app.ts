@@ -55,7 +55,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(designs.create(parsed.data));
+    return reply.code(201).send(designs.upsert(parsed.data));
   });
   app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', async (request, reply) => {
     try { return await assetStore.manifest(request.params.productId); }
@@ -65,7 +65,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(designs.create(parsed.data));
+    return reply.code(201).send(designs.upsert(parsed.data));
   });
   app.get<{ Params: { designId: string } }>('/v1/designs/:designId', async (request, reply) => {
     const record = designs.get(request.params.designId);
