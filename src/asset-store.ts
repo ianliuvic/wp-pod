@@ -11,6 +11,8 @@ type Normalized = { modes?: NormalizedMode[] };
 export class AssetStore {
   constructor(private readonly root: string, private readonly publicBaseUrl: string) {}
 
+  private sceneViewCache = new Map<string, { id: string; previewUrl: string | null }[]>();
+
   private productsRoot() { return path.join(this.root, 'products'); }
   private productRoot(id: string) {
     if (!/^\d+$/.test(id)) throw new Error('Invalid product id');
@@ -32,17 +34,38 @@ export class AssetStore {
   async readCapture(id: string): Promise<Capture> {
     return JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'capture.json'), 'utf8')) as Capture;
   }
+  private async readViews(id: string, kind: string, viewIds: string[]): Promise<{ id: string; previewUrl: string | null }[]> {
+    const cacheKey = `${id}:${kind}`;
+    const cached = this.sceneViewCache.get(cacheKey);
+    if (cached) return cached;
+    let result: { id: string; previewUrl: string | null }[] = viewIds.map((viewId) => ({ id: viewId, previewUrl: null }));
+    try {
+      const scene = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'scenes', `${kind}.json`), 'utf8')) as Record<string, { psdFrames?: { F?: string }[] }>;
+      result = viewIds.map((viewId) => {
+        const frames = scene?.[viewId]?.psdFrames;
+        const base = Array.isArray(frames) && frames.length ? frames[0] : null;
+        const f = base && typeof base.F === 'string' ? base.F : '';
+        const previewUrl = f ? this.assetUrl(id, path.join('pod', 'psdlayers', f.replace(/\.png$/, '_600.png'))) : null;
+        return { id: viewId, previewUrl };
+      });
+    } catch {}
+    this.sceneViewCache.set(cacheKey, result);
+    return result;
+  }
+
   async manifest(id: string) {
     const capture = await this.readCapture(id);
     let normalized: Normalized | null = null;
     try { normalized = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'normalized.json'), 'utf8')) as Normalized; } catch {}
-    const modes = (capture.modes ?? []).map((mode) => {
+    const modes = await Promise.all((capture.modes ?? []).map(async (mode) => {
       const normalizedMode = normalized?.modes?.find((item) => (item.kind ?? item.name) === mode.kind);
+      const views = await this.readViews(id, mode.kind, mode.viewIds ?? []);
       return {
         kind: mode.kind,
         templateName: mode.templateName ?? null,
         prototypeGroupId: mode.prototypeGroupId ?? null,
         viewIds: mode.viewIds ?? [],
+        views,
         sceneUrl: this.assetUrl(id, path.join('pod', 'scenes', `${mode.kind}.json`)),
         sides: (mode.sides ?? []).map((side, index) => {
           const normalizedSide = normalizedMode?.designSides?.find((item) => String(item.id) === String(side.id));
@@ -54,7 +77,7 @@ export class AssetStore {
           };
         })
       };
-    });
+    }));
     return {
       schemaVersion: 1,
       productId: id,
