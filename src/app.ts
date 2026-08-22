@@ -5,14 +5,16 @@ import type { FastifyReply } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
 import { designSchema, renderRequestSchema } from './schemas.js';
 import { MonitoringCollector } from './monitoring.js';
+import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string } = {}) {
-  const app = Fastify({ logger: config.NODE_ENV !== 'test' });
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings> } = {}) {
+  const app = Fastify({ logger: config.NODE_ENV !== 'test', trustProxy: ['loopback', 'linklocal', 'uniquelocal'] });
   const monitoring = new MonitoringCollector();
   const requestStartedAt = new WeakMap<object, bigint>();
   const assetsRoot = options.assetsRoot ?? config.assetsRoot;
@@ -23,6 +25,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   await paintsandDesigns.init();
   const paintsandApiKey = options.paintsandApiKey ?? config.PAINTSAND_API_KEY;
   const monitoringToken = options.monitoringToken ?? config.MONITORING_TOKEN;
+  const limits: RateLimitSettings = { ...config.rateLimits, ...options.rateLimits };
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
     if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
     const query = request.query as Record<string, unknown>;
@@ -44,17 +47,30 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     return null;
   }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
-    function setCacheHeaders(reply: FastifyReply, filePath: string): void {
+  await app.register(fastifyRateLimit, { global: false });
+  function setAssetCacheHeaders(reply: FastifyReply, filePath: string): void {
     const ext = path.extname(filePath).toLowerCase();
-    if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico'].includes(ext)) {
+    if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.psd'].includes(ext)) {
+      reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.json') {
+      reply.header('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800');
+    } else {
+      reply.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+    }
+    reply.header('Vary', 'Accept-Encoding');
+  }
+  function setVendorCacheHeaders(reply: FastifyReply, filePath: string): void {
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico', '.woff', '.woff2', '.ttf'].includes(ext)) {
       reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     } else {
-      reply.header('Cache-Control', 'public, max-age=3600');
+      reply.header('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800');
     }
+    reply.header('Vary', 'Accept-Encoding');
   }
-  if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false, setHeaders: setCacheHeaders });
+  if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false, setHeaders: setAssetCacheHeaders });
   const vendorRoot = path.resolve('public/vendor');
-  if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, setHeaders: setCacheHeaders });
+  if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, setHeaders: setVendorCacheHeaders });
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
@@ -69,8 +85,12 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
     monitoring.record(request.routeOptions.url, request.url, reply.statusCode, durationMs);
   });
-  app.get('/health', async () => ({ status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) }));
+  app.get('/health', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) };
+  });
   app.get('/internal/metrics', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     if (!monitoringToken) return reply.code(503).send({ error: 'monitoring_not_configured' });
     const supplied = typeof request.headers.authorization === 'string' ? request.headers.authorization : '';
     const expected = Buffer.from(`Bearer ${monitoringToken}`);
@@ -78,45 +98,56 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
     return monitoring.snapshot(fs.existsSync(assetsRoot) ? assetsRoot : process.cwd());
   });
-  app.get('/v1/products', async () => ({ products: await assetStore.listProducts() }));
-  app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', async (request, reply) => {
+  app.get('/v1/products', { config: { rateLimit: rateLimitPolicy('wordpress', 'product-list', limits.productListMax, limits.windowMs) } }, async (_request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+    return { products: await assetStore.listProducts() };
+  });
+  app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', { config: { rateLimit: rateLimitPolicy('shopify', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
     try { return await assetStore.manifest(request.params.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
   });
-  app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/designs', async (request, reply) => {
+  app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/designs', { config: { rateLimit: rateLimitPolicy('shopify', 'design-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
     return reply.code(201).send(await designs.upsert(parsed.data));
   });
-  app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', async (request, reply) => {
+  app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', { config: { rateLimit: rateLimitPolicy('wordpress', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
     try { return await assetStore.manifest(request.params.productId); }
     catch { return reply.code(404).send({ error: 'product_not_found' }); }
   });
-  app.post('/v1/designs', async (request, reply) => {
+  app.post('/v1/designs', { config: { rateLimit: rateLimitPolicy('wordpress', 'design-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
     return reply.code(201).send(await designs.upsert(parsed.data));
   });
-  app.get<{ Params: { designId: string } }>('/v1/designs/:designId', async (request, reply) => {
+  app.get<{ Params: { designId: string } }>('/v1/designs/:designId', { config: { rateLimit: rateLimitPolicy('wordpress', 'design-read', limits.designReadMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const record = await designs.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
-  app.post('/v1/paintsand/designs', async (request, reply) => {
+  app.post('/v1/paintsand/designs', { config: { rateLimit: rateLimitPolicy('paintsand', 'design-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const denied = verifyPaintsand(request, reply); if (denied) return denied;
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
     return reply.code(201).send(await paintsandDesigns.upsert(parsed.data));
   });
-  app.get<{ Params: { designId: string } }>('/v1/paintsand/designs/:designId', async (request, reply) => {
+  app.get<{ Params: { designId: string } }>('/v1/paintsand/designs/:designId', { config: { rateLimit: rateLimitPolicy('paintsand', 'design-read', limits.designReadMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const denied = verifyPaintsand(request, reply); if (denied) return denied;
     const record = await paintsandDesigns.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
-  app.post('/v1/renders', async (request, reply) => {
+  app.post('/v1/renders', { config: { rateLimit: rateLimitPolicy('wordpress', 'render', limits.renderMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     const parsed = renderRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_render_request', issues: parsed.error.flatten() });
     return reply.code(501).send({
@@ -124,6 +155,17 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       message: 'Manifest loading and design validation are ready. The local Vetrina-compatible renderer adapter is the next implementation step.'
     });
   });
-  app.setErrorHandler((error, _request, reply) => reply.code(500).send({ error: 'internal_error', message: config.NODE_ENV === 'production' ? undefined : error instanceof Error ? error.message : String(error) }));
+  app.setErrorHandler((error, _request, reply) => {
+    const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 500;
+    if (statusCode === 429) {
+      return reply.code(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        code: 'rate_limit_exceeded',
+        message: error instanceof Error ? error.message : 'Rate limit exceeded'
+      });
+    }
+    return reply.code(500).send({ error: 'internal_error', message: config.NODE_ENV === 'production' ? undefined : error instanceof Error ? error.message : String(error) });
+  });
   return app;
 }

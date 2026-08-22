@@ -20,6 +20,7 @@ describe('API', () => {
     expect((await app.inject({ url: '/health' })).statusCode).toBe(200);
     const response = await app.inject({ url: '/v1/products/123/manifest' });
     expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toContain('s-maxage=3600');
     const mode = response.json().modes[0];
     expect(mode).not.toHaveProperty('scene');
     expect(mode.sceneUrl).toBe('http://test.local/assets/products/123/pod/scenes/all.json');
@@ -27,6 +28,7 @@ describe('API', () => {
     expect(mode.sides[0].previewWidth).toBe(1042);
     const renderer = await app.inject({ url: '/vendor/v3/renderer-frame.html' });
     expect(renderer.statusCode).toBe(200);
+    expect(renderer.headers['cache-control']).toContain('stale-while-revalidate');
     expect(renderer.body).toContain('Number(message.sceneItemRenderSize)');
     await app.close();
   });
@@ -60,6 +62,29 @@ describe('API', () => {
     expect(record.design.automation.jobId).toBe('job-1');
     const fetched = await app.inject({ url: `/v1/designs/${record.id}` });
     expect(fetched.json().design.layers[0].filterValue).toBe(120);
+    await app.close();
+  });
+
+  it('rate limits routes independently by site and returns standard retry headers', async () => {
+    const app = await buildApp({
+      assetsRoot: await fixture(),
+      publicBaseUrl: 'http://test.local',
+      paintsandApiKey: 'test-paintsand-key',
+      rateLimits: { windowMs: 60_000, manifestMax: 2, designReadMax: 2, designWriteMax: 2, productListMax: 2, renderMax: 2 }
+    });
+    expect((await app.inject({ url: '/v1/products/123/manifest', remoteAddress: '198.51.100.10' })).statusCode).toBe(200);
+    expect((await app.inject({ url: '/v1/products/123/manifest', remoteAddress: '198.51.100.10' })).statusCode).toBe(200);
+    const limited = await app.inject({ url: '/v1/products/123/manifest', remoteAddress: '198.51.100.10' });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().code).toBe('rate_limit_exceeded');
+    expect(limited.headers['retry-after']).toBeDefined();
+    expect((await app.inject({ url: '/v1/products/123/manifest', remoteAddress: '198.51.100.11' })).statusCode).toBe(200);
+    const missingPaintsandDesign = await app.inject({
+      url: '/v1/paintsand/designs/00000000-0000-0000-0000-000000000000',
+      headers: { 'x-paintsand-api-key': 'test-paintsand-key', 'x-paintsand-client-id': 'customer-a' },
+      remoteAddress: '198.51.100.10'
+    });
+    expect(missingPaintsandDesign.statusCode).toBe(404);
     await app.close();
   });
 
