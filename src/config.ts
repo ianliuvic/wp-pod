@@ -9,7 +9,6 @@ const schema = z.object({
   POD_ASSETS_ROOT: z.string().default('./pod-assets'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   API_KEY: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional(),
   PAINTSAND_API_KEY: z.string().optional(),
   MONITORING_TOKEN: z.string().min(32).optional(),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

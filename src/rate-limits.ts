@@ -12,7 +12,7 @@ export type RateLimitSettings = {
 };
 
 type Site = 'paintsand' | 'shopify' | 'wordpress';
-type Action = 'product-list' | 'manifest' | 'design-read' | 'design-write' | 'image-moderation' | 'render';
+type Action = 'product-list' | 'manifest' | 'design-read' | 'design-write' | 'render';
 
 function safeHeader(request: FastifyRequest, name: string): string {
   const value = request.headers[name];
