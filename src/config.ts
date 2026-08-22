@@ -10,6 +10,7 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   API_KEY: z.string().optional(),
   PAINTSAND_API_KEY: z.string().optional(),
+  REPLICATE_API_TOKEN: z.string().optional(),
   MONITORING_TOKEN: z.string().min(32).optional(),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_PRODUCT_LIST_MAX: z.coerce.number().int().positive().default(30),
