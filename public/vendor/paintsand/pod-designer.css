@@ -1437,8 +1437,8 @@
 .pod-designer__upload:hover,.pod-designer__preset-launch:hover,.pod-designer__pieces button:hover{border-color:var(--ps-designer-accent)!important}
 .pod-designer :focus-visible{outline:0!important;box-shadow:0 0 0 2px rgba(255,91,59,.32)!important}
 .pod-designer__preview-status-dot{background:var(--ps-designer-accent)!important;box-shadow:0 0 0 3px rgba(255,91,59,.15)!important}
-.ps-design-status{display:flex;align-items:center;justify-content:center;width:100%;margin:7px 0 12px!important;color:#767674;font:12px/1.45 "Futura Light","Futura Book","Trebuchet MS",Arial,sans-serif;text-align:center}
-.ps-design-status::before{content:"";flex:0 0 7px;width:7px;height:7px;margin-right:7px;border-radius:50%;background:#d98700}
+.ps-design-status{display:flex;align-items:flex-start;justify-content:center;width:100%;margin:7px 0 12px!important;color:#767674;font:12px/1.45 "Futura Light","Futura Book","Trebuchet MS",Arial,sans-serif;text-align:center}
+.ps-design-status::before{content:"";flex:0 0 7px;width:7px;height:7px;margin:5px 7px 0 0;border-radius:50%;background:#d98700}
 .ps-design-status.is-complete{color:#426b4b}
 .ps-design-status.is-complete::before{background:#4d8a5b}
 .ps-product-summary .ps-buy-now.ps-design-required{background:#dededb!important;color:#8a8a87!important;cursor:not-allowed!important;pointer-events:auto!important}
