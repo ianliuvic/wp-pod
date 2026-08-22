@@ -63,6 +63,21 @@ describe('API', () => {
     await app.close();
   });
 
+  it('protects monitoring metrics and reports request and resource health', async () => {
+    const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local', monitoringToken: 'test-monitoring-token-that-is-long-enough' });
+    await app.inject({ url: '/health' });
+    expect((await app.inject({ url: '/internal/metrics' })).statusCode).toBe(401);
+    const response = await app.inject({ url: '/internal/metrics', headers: { authorization: 'Bearer test-monitoring-token-that-is-long-enough' } });
+    expect(response.statusCode).toBe(200);
+    const metrics = response.json();
+    expect(metrics.schema).toBe('pod-backend-metrics-v1');
+    expect(metrics.http.requests).toBeGreaterThanOrEqual(1);
+    expect(metrics.cpu.usagePercent).toBeGreaterThanOrEqual(0);
+    expect(metrics.memory.rssBytes).toBeGreaterThan(0);
+    expect(metrics.disk.usagePercent).not.toBeNull();
+    await app.close();
+  });
+
   it('keeps Paintsand designs behind a dedicated authenticated store', async () => {
     const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local', paintsandApiKey: 'test-paintsand-key' });
     const design = {

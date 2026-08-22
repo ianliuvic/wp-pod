@@ -9,9 +9,12 @@ import { config } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
 import { designSchema, renderRequestSchema } from './schemas.js';
+import { MonitoringCollector } from './monitoring.js';
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string } = {}) {
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test' });
+  const monitoring = new MonitoringCollector();
+  const requestStartedAt = new WeakMap<object, bigint>();
   const assetsRoot = options.assetsRoot ?? config.assetsRoot;
   const assetStore = new AssetStore(assetsRoot, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
   const designs = new DesignStore(config.DATABASE_URL, 'designs');
@@ -19,6 +22,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   await designs.init();
   await paintsandDesigns.init();
   const paintsandApiKey = options.paintsandApiKey ?? config.PAINTSAND_API_KEY;
+  const monitoringToken = options.monitoringToken ?? config.MONITORING_TOKEN;
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
     if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
     const query = request.query as Record<string, unknown>;
@@ -56,7 +60,24 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
     if (request.headers['x-api-key'] !== config.API_KEY) return reply.code(401).send({ error: 'unauthorized' });
   });
+  app.addHook('onRequest', async (request) => {
+    requestStartedAt.set(request, process.hrtime.bigint());
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    const startedAt = requestStartedAt.get(request);
+    if (typeof startedAt !== 'bigint') return;
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    monitoring.record(request.routeOptions.url, request.url, reply.statusCode, durationMs);
+  });
   app.get('/health', async () => ({ status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) }));
+  app.get('/internal/metrics', async (request, reply) => {
+    if (!monitoringToken) return reply.code(503).send({ error: 'monitoring_not_configured' });
+    const supplied = typeof request.headers.authorization === 'string' ? request.headers.authorization : '';
+    const expected = Buffer.from(`Bearer ${monitoringToken}`);
+    const received = Buffer.from(supplied);
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
+    return monitoring.snapshot(fs.existsSync(assetsRoot) ? assetsRoot : process.cwd());
+  });
   app.get('/v1/products', async () => ({ products: await assetStore.listProducts() }));
   app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', async (request, reply) => {
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
