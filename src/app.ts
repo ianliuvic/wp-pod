@@ -6,14 +6,20 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fastifyRateLimit from '@fastify/rate-limit';
+import { z } from 'zod';
 import { config } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
 import { designSchema, renderRequestSchema } from './schemas.js';
 import { MonitoringCollector } from './monitoring.js';
 import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
+import { moderateImage } from './image-moderation.js';
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings> } = {}) {
+const moderationRequestSchema = z.object({
+  image: z.string().max(6_000_000).regex(/^data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/)
+});
+
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; openAiApiKey?: string } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test', trustProxy: ['loopback', 'linklocal', 'uniquelocal'] });
   const monitoring = new MonitoringCollector();
   const requestStartedAt = new WeakMap<object, bigint>();
@@ -114,6 +120,19 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
     return reply.code(201).send(await designs.upsert(parsed.data));
+  });
+  app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/moderate-image', { bodyLimit: 6_100_000, config: { rateLimit: rateLimitPolicy('shopify', 'image-moderation', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    const parsed = moderationRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_moderation_image' });
+    const apiKey = options.openAiApiKey ?? config.OPENAI_API_KEY;
+    if (!apiKey) return reply.code(503).send({ error: 'moderation_not_configured' });
+    try {
+      return await moderateImage(parsed.data.image, apiKey);
+    } catch {
+      return reply.code(502).send({ error: 'moderation_unavailable' });
+    }
   });
   app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', { config: { rateLimit: rateLimitPolicy('wordpress', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
