@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 type CaptureSide = { id: string; name?: string; previewWidth?: number; previewHeight?: number; editorCanvas?: { width: number; height: number } };
 type CaptureMode = { kind: 'all' | 'single'; templateName?: string; prototypeGroupId?: string; sides?: CaptureSide[]; viewIds?: string[] };
@@ -12,6 +13,7 @@ export class AssetStore {
   constructor(private readonly root: string, private readonly publicBaseUrl: string) {}
 
   private sceneViewCache = new Map<string, { id: string; previewUrl: string | null }[]>();
+  private assetVersionCache = new Map<string, { fingerprint: string; version: string }>();
 
   private productsRoot() { return path.join(this.root, 'products'); }
   private productRoot(id: string) {
@@ -20,6 +22,22 @@ export class AssetStore {
   }
   private assetUrl(id: string, relative: string) {
     return `${this.publicBaseUrl.replace(/\/$/, '')}/assets/products/${id}/${relative.split(path.sep).map(encodeURIComponent).join('/')}`;
+  }
+  private async versionedAssetUrl(id: string, relative: string) {
+    const absolute = path.join(this.productRoot(id), relative);
+    try {
+      const stat = await fs.stat(absolute);
+      const fingerprint = `${stat.size}:${stat.mtimeMs}`;
+      const cached = this.assetVersionCache.get(absolute);
+      if (cached?.fingerprint === fingerprint) return `${this.assetUrl(id, relative)}?v=${cached.version}`;
+      const version = crypto.createHash('sha256').update(await fs.readFile(absolute)).digest('hex').slice(0, 16);
+      this.assetVersionCache.set(absolute, { fingerprint, version });
+      return `${this.assetUrl(id, relative)}?v=${version}`;
+    } catch {
+      // Preserve the historical URL shape for incomplete archives so callers still
+      // receive the same 404 instead of manifest generation failing altogether.
+      return this.assetUrl(id, relative);
+    }
   }
   async listProducts() {
     const entries = await fs.readdir(this.productsRoot(), { withFileTypes: true });
@@ -57,7 +75,7 @@ export class AssetStore {
           } catch {}
         }
         const f = best && typeof best.F === 'string' ? best.F : '';
-        const previewUrl = f ? this.assetUrl(id, path.join('pod', 'psdlayers', f.replace(/\.png$/, '_600.png'))) : null;
+        const previewUrl = f ? await this.versionedAssetUrl(id, path.join('pod', 'psdlayers', f.replace(/\.png$/, '_600.png'))) : null;
         return { id: viewId, previewUrl };
       }));
     } catch {}
@@ -72,22 +90,24 @@ export class AssetStore {
     const modes = await Promise.all((capture.modes ?? []).map(async (mode) => {
       const normalizedMode = normalized?.modes?.find((item) => (item.kind ?? item.name) === mode.kind);
       const views = await this.readViews(id, mode.kind, mode.viewIds ?? []);
+      const sceneUrl = await this.versionedAssetUrl(id, path.join('pod', 'scenes', `${mode.kind}.json`));
+      const sides = await Promise.all((mode.sides ?? []).map(async (side, index) => {
+        const normalizedSide = normalizedMode?.designSides?.find((item) => String(item.id) === String(side.id));
+        return {
+          ...side,
+          previewWidth: normalizedSide?.width ?? side.previewWidth,
+          previewHeight: normalizedSide?.height ?? side.previewHeight,
+          maskUrl: await this.versionedAssetUrl(id, path.join('pod', 'masks', mode.kind, `${String(index + 1).padStart(2, '0')}_${side.id}.png`))
+        };
+      }));
       return {
         kind: mode.kind,
         templateName: mode.templateName ?? null,
         prototypeGroupId: mode.prototypeGroupId ?? null,
         viewIds: mode.viewIds ?? [],
         views,
-        sceneUrl: this.assetUrl(id, path.join('pod', 'scenes', `${mode.kind}.json`)),
-        sides: (mode.sides ?? []).map((side, index) => {
-          const normalizedSide = normalizedMode?.designSides?.find((item) => String(item.id) === String(side.id));
-          return {
-            ...side,
-            previewWidth: normalizedSide?.width ?? side.previewWidth,
-            previewHeight: normalizedSide?.height ?? side.previewHeight,
-            maskUrl: this.assetUrl(id, path.join('pod', 'masks', mode.kind, `${String(index + 1).padStart(2, '0')}_${side.id}.png`))
-          };
-        })
+        sceneUrl,
+        sides
       };
     }));
     return {
