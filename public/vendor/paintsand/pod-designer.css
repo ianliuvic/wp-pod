@@ -1446,8 +1446,8 @@
 }
 
 /* Desktop canvas toolbar: one calm row, with icon-first actions. */
-.pod-designer__desktop-toolbar{display:none}
-@media(min-width:1251px){
+.pod-designer__desktop-toolbar{display:none!important}
+@media(min-width:1251px), (min-width:750px) and (orientation:landscape){
   .pod-designer__workspace-heading{
     grid-template-columns:minmax(108px,1fr) auto!important;
     column-gap:10px!important;
@@ -1459,14 +1459,14 @@
   }
   .pod-designer__legacy-actions{display:none!important}
   .pod-designer__desktop-toolbar{
-    display:flex;
+    display:flex!important;
     align-items:stretch;
     justify-content:flex-end;
     gap:1px;
     min-width:0;
     white-space:nowrap;
   }
-  .pod-designer__tool-menu{position:relative;flex:0 0 auto}
+  .pod-designer__desktop-toolbar .pod-designer__tool-menu{position:relative;display:block!important;flex:0 0 auto}
   .pod-designer__desktop-toolbar .pod-designer__tool,
   .pod-designer__desktop-toolbar .pod-designer__tool-menu>summary{
     display:flex!important;
