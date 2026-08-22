@@ -1404,6 +1404,32 @@
 .pod-designer__product h2,.pod-designer__preview-heading strong,.pod-designer__stage-heading strong,.pod-designer__layer-section h3{font-family:"Futura Book","Futura Light","Trebuchet MS",Arial,sans-serif!important;font-weight:400!important;letter-spacing:.055em!important}
 .pod-designer__tabs,.pod-designer__artwork-switch{border-radius:0!important}
 .pod-designer .pod-designer__tabs button,.pod-designer .pod-designer__artwork-switch button,.pod-designer__mode button,.pod-designer__pieces button,.pod-designer__upload,.pod-designer__preset-launch,.pod-designer__text-entry,.pod-designer__font-picker-button,.pod-designer__field input,.pod-designer__field select,.pod-designer__background-picker,.pod-designer__canvas-toolbar button,.pod-designer__close,.pod-designer__crop-modal,.pod-designer__preset-picker-dialog{border-radius:0!important}
+
+/* Desktop text controls must shrink inside the fixed-width tools column. */
+@media (min-width:1251px) {
+  .pod-designer__tools { overflow-x:hidden; }
+  .pod-designer__panel[data-pod-panel="text"],
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__text-drawer,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__text-drawer-body,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__text-grid,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__field,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__font-picker,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__color-control,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__advanced-toggle,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__advanced-text,
+  .pod-designer__panel[data-pod-panel="text"] .pod-designer__secondary-button {
+    min-width:0;
+    max-width:100%;
+    box-sizing:border-box;
+  }
+  .pod-designer__panel[data-pod-panel="text"] input,
+  .pod-designer__panel[data-pod-panel="text"] select,
+  .pod-designer__panel[data-pod-panel="text"] button {
+    min-width:0;
+    max-width:100%;
+    box-sizing:border-box;
+  }
+}
 .pod-designer .pod-designer__tabs button.is-active{background:var(--ps-designer-pale)!important;color:#111!important;box-shadow:none!important}
 .pod-designer .pod-designer__artwork-switch button.is-active,.pod-designer__mode button.is-active{border-color:#111!important;background:#111!important;color:#fff!important}
 .pod-designer__finish{border:1px solid #111!important;border-radius:0!important;background:var(--ps-designer-accent)!important;color:#111!important;font-weight:400!important;letter-spacing:.04em!important;transition:background .18s ease,color .18s ease!important}
