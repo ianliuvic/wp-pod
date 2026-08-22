@@ -7,15 +7,18 @@ export type StoredDesign = { id: string; createdAt: string; updatedAt: string; d
 export class DesignStore {
   private readonly pool: Pool | null;
   private readonly memory = new Map<string, StoredDesign>();
+  private readonly tableName: string;
 
-  constructor(databaseUrl?: string) {
+  constructor(databaseUrl?: string, tableName = 'designs') {
+    if (!/^[a-z][a-z0-9_]*$/.test(tableName)) throw new Error('Invalid design table name');
+    this.tableName = tableName;
     this.pool = databaseUrl ? new Pool({ connectionString: databaseUrl, max: 5 }) : null;
   }
 
   async init() {
     if (!this.pool) return;
     await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS designs (
+      CREATE TABLE IF NOT EXISTS ${this.tableName} (
         id uuid PRIMARY KEY,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
@@ -35,7 +38,7 @@ export class DesignStore {
     }
     const id = design.id ?? randomUUID();
     const result = await this.pool.query(
-      `INSERT INTO designs (id, created_at, updated_at, design)
+      `INSERT INTO ${this.tableName} (id, created_at, updated_at, design)
        VALUES ($1, now(), now(), $2::jsonb)
        ON CONFLICT (id) DO UPDATE SET design = EXCLUDED.design, updated_at = now()
        RETURNING id, created_at, updated_at, design`,
@@ -53,7 +56,7 @@ export class DesignStore {
   async get(id: string) {
     if (!this.pool) return this.memory.get(id) ?? null;
     const result = await this.pool.query(
-      'SELECT id, created_at, updated_at, design FROM designs WHERE id = $1',
+      `SELECT id, created_at, updated_at, design FROM ${this.tableName} WHERE id = $1`,
       [id]
     );
     const row = result.rows[0];

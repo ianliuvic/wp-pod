@@ -10,12 +10,15 @@ import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
 import { designSchema, renderRequestSchema } from './schemas.js';
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string } = {}) {
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test' });
   const assetsRoot = options.assetsRoot ?? config.assetsRoot;
   const assetStore = new AssetStore(assetsRoot, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
-  const designs = new DesignStore(config.DATABASE_URL);
+  const designs = new DesignStore(config.DATABASE_URL, 'designs');
+  const paintsandDesigns = new DesignStore(config.DATABASE_URL, 'paintsand_designs');
   await designs.init();
+  await paintsandDesigns.init();
+  const paintsandApiKey = options.paintsandApiKey ?? config.PAINTSAND_API_KEY;
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
     if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
     const query = request.query as Record<string, unknown>;
@@ -26,6 +29,14 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const message = Object.keys(query).filter((key) => key !== 'signature').sort().map((key) => `${key}=${Array.isArray(query[key]) ? (query[key] as unknown[]).join(',') : String(query[key])}`).join('');
     const expected = crypto.createHmac('sha256', config.SHOPIFY_API_SECRET).update(message).digest('hex');
     if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return reply.code(401).send({ error: 'invalid_shopify_proxy_signature' });
+    return null;
+  }
+  function verifyPaintsand(request: { headers: Record<string, unknown> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+    if (!paintsandApiKey) return reply.code(503).send({ error: 'paintsand_api_not_configured' });
+    const supplied = typeof request.headers['x-paintsand-api-key'] === 'string' ? request.headers['x-paintsand-api-key'] : '';
+    const expected = Buffer.from(paintsandApiKey);
+    const received = Buffer.from(supplied);
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
     return null;
   }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
@@ -42,7 +53,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, setHeaders: setCacheHeaders });
 
   app.addHook('onRequest', async (request, reply) => {
-    if (request.url.startsWith('/v1/shopify/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
+    if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
     if (request.headers['x-api-key'] !== config.API_KEY) return reply.code(401).send({ error: 'unauthorized' });
   });
   app.get('/health', async () => ({ status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) }));
@@ -70,6 +81,18 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   });
   app.get<{ Params: { designId: string } }>('/v1/designs/:designId', async (request, reply) => {
     const record = await designs.get(request.params.designId);
+    return record ?? reply.code(404).send({ error: 'design_not_found' });
+  });
+  app.post('/v1/paintsand/designs', async (request, reply) => {
+    const denied = verifyPaintsand(request, reply); if (denied) return denied;
+    const parsed = designSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
+    try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
+    return reply.code(201).send(await paintsandDesigns.upsert(parsed.data));
+  });
+  app.get<{ Params: { designId: string } }>('/v1/paintsand/designs/:designId', async (request, reply) => {
+    const denied = verifyPaintsand(request, reply); if (denied) return denied;
+    const record = await paintsandDesigns.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
   app.post('/v1/renders', async (request, reply) => {

@@ -62,4 +62,25 @@ describe('API', () => {
     expect(fetched.json().design.layers[0].filterValue).toBe(120);
     await app.close();
   });
+
+  it('keeps Paintsand designs behind a dedicated authenticated store', async () => {
+    const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local', paintsandApiKey: 'test-paintsand-key' });
+    const design = {
+      schemaVersion: 1,
+      productId: '123',
+      mode: 'all',
+      background: '#ffffff',
+      backgrounds: {},
+      layers: [],
+      quantities: {},
+      previews: ['https://designs.paintsand.com/designs/example/preview.webp']
+    };
+    expect((await app.inject({ method: 'POST', url: '/v1/paintsand/designs', payload: design })).statusCode).toBe(401);
+    const saved = await app.inject({ method: 'POST', url: '/v1/paintsand/designs', headers: { 'x-paintsand-api-key': 'test-paintsand-key' }, payload: design });
+    expect(saved.statusCode).toBe(201);
+    const record = saved.json();
+    expect((await app.inject({ url: `/v1/designs/${record.id}` })).statusCode).toBe(404);
+    expect((await app.inject({ url: `/v1/paintsand/designs/${record.id}`, headers: { 'x-paintsand-api-key': 'test-paintsand-key' } })).statusCode).toBe(200);
+    await app.close();
+  });
 });

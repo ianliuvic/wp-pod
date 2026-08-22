@@ -9,6 +9,7 @@ const schema = z.object({
   POD_ASSETS_ROOT: z.string().default('./pod-assets'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
   API_KEY: z.string().optional(),
+  PAINTSAND_API_KEY: z.string().optional(),
   SHOPIFY_API_SECRET: z.string().optional(),
   SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com'),
   DATABASE_URL: z.string().url().optional()
