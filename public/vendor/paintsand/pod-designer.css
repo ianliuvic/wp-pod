@@ -1533,20 +1533,21 @@
     right:0;
     z-index:50;
     display:grid;
-    width:148px;
-    min-width:148px;
+    width:176px;
+    min-width:176px;
     gap:2px;
-    padding:5px;
+    padding:6px;
     border:1px solid rgba(9,9,9,.16);
     border-radius:0;
     background:#fff;
-    box-shadow:0 12px 30px rgba(0,0,0,.14);
+    box-shadow:0 12px 30px rgba(0,0,0,.12);
+    box-sizing:border-box;
   }
   .pod-designer__desktop-toolbar .pod-designer__tool-menu>div:not(.pod-designer__canvas-opacity) button{
     display:flex!important;
     width:100%;
     min-width:0!important;
-    height:34px!important;
+    height:36px!important;
     justify-content:flex-start;
     padding:0 9px!important;
     border-radius:0!important;
@@ -1560,11 +1561,20 @@
     top:calc(100% + 6px);
     right:0;
     z-index:50;
-    width:220px;
-    min-height:50px;
+    display:grid;
+    width:176px;
+    min-height:0;
+    gap:10px;
+    padding:12px;
     border:1px solid rgba(9,9,9,.16);
     border-radius:0;
     background:#fff;
+    box-shadow:0 12px 30px rgba(0,0,0,.12);
+    box-sizing:border-box;
   }
+  .pod-designer__desktop-toolbar .pod-designer__canvas-opacity[hidden]{display:none}
+  .pod-designer__desktop-toolbar .pod-designer__opacity-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#111;font-size:11px;line-height:1.2}
+  .pod-designer__desktop-toolbar .pod-designer__opacity-heading output{min-width:0;color:#111;font-size:11px;font-variant-numeric:tabular-nums;text-align:right}
+  .pod-designer__desktop-toolbar .pod-designer__canvas-opacity>input{display:block;width:100%;min-width:0;margin:0;cursor:pointer}
 }
 
