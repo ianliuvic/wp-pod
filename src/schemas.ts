@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const layerSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(['image', 'text']),
+  modeKind: z.enum(['all', 'single']).optional(),
   sideId: z.string().min(1),
   sourceUrl: z.string().url().optional(),
   src: z.string().url().optional(),
@@ -40,6 +41,7 @@ export const designSchema = z.object({
   schemaVersion: z.literal(1),
   productId: z.string().regex(/^\d+$/),
   mode: z.enum(['all', 'single']),
+  modeKind: z.enum(['all', 'single']).optional(),
   background: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().default(null),
   backgrounds: z.record(z.string().regex(/^#[0-9a-f]{6}$/i)).default({}),
   layers: z.array(layerSchema).max(200),
