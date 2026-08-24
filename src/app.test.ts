@@ -68,7 +68,7 @@ describe('API', () => {
       layers: [{
         id: '1', kind: 'image', sideId: 'side-1', sourceUrl: 'https://cdn.example.com/source.png',
         x: 0.5, y: 0.5, scaleX: -1, scaleY: 1, rotation: 15, opacity: 0.8, zIndex: 0,
-        boxW: 72, boxH: 64, fit: 'tile', imageMode: 'tile', tile: 'mirror', tileSize: 35,
+        boxW: 72, boxH: 64, fit: 'tile', imageMode: 'tile', tile: 'mirror', tileSize: 35, tileGap: 24,
         crop: { x: 0.1, y: 0.2, width: 0.7, height: 0.6 }, filter: 'contrast', filterValue: 120
       }],
       quantities: {},
@@ -81,6 +81,7 @@ describe('API', () => {
     const record = saved.json();
     expect(record.design.backgrounds['side-1']).toBe('#112233');
     expect(record.design.layers[0].tile).toBe('mirror');
+    expect(record.design.layers[0].tileGap).toBe(24);
     expect(record.design.layers[0].scaleX).toBe(-1);
     expect(record.design.surfaces[0].sideId).toBe('side-1');
     expect(record.design.automation.jobId).toBe('job-1');

@@ -18,8 +18,9 @@ export const layerSchema = z.object({
   boxH: z.number().positive().max(1000).nullable().optional(),
   fit: z.enum(['contain', 'cover', 'fill', 'stretch', 'tile']).optional(),
   imageMode: z.enum(['custom', 'fit', 'fill', 'stretch', 'tile']).optional(),
-  tile: z.enum(['none', 'basic', 'half-drop', 'half-brick', 'mirror']).optional(),
+  tile: z.enum(['none', 'basic', 'brick-x', 'brick-y', 'random', 'half-drop', 'half-brick', 'mirror']).optional(),
   tileSize: z.number().positive().max(1000).optional(),
+  tileGap: z.number().min(0).max(100).optional(),
   crop: z.record(z.unknown()).nullable().optional(),
   filter: z.string().max(100).optional(),
   filterValue: z.number().optional()
