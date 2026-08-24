@@ -61,10 +61,15 @@ export class AssetStore {
       const scene = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'scenes', `${kind}.json`), 'utf8')) as Record<string, { psdFrames?: Array<{ T?: string; N?: string; F?: string }> }>;
       result = await Promise.all(viewIds.map(async (viewId) => {
         const all = (scene?.[viewId]?.psdFrames ?? []).filter((frame) => typeof frame.F === 'string' && frame.F.length > 0);
+        // A manifest preview is only a temporary placeholder until the live renderer
+        // produces the composed scene. Prefer the model layer: schema/background-only
+        // layers can look empty, and light Multiply artwork appears almost transparent
+        // without the model beneath it.
+        const model = all.filter((frame) => frame.T === 'model');
         const schema = all.find((frame) => frame.T === 'schema' || /背景|background/i.test(frame.N ?? ''));
         const raster = all.filter((frame) => (frame.T ?? 'Raster') === 'Raster');
         const candidates = raster.filter((frame) => !/highlight|shadow|高光|阴影/i.test(frame.N ?? ''));
-        const pool = schema ? [schema] : (candidates.length ? candidates : (raster.length ? raster : all));
+        const pool = model.length ? model : (schema ? [schema] : (candidates.length ? candidates : (raster.length ? raster : all)));
         let best: { F?: string } | null = null;
         let bestSize = -1;
         for (const frame of pool) {

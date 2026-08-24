@@ -34,6 +34,26 @@ describe('API', () => {
     expect(renderer.statusCode).toBe(200);
     expect(renderer.headers['cache-control']).toContain('stale-while-revalidate');
     expect(renderer.body).toContain('Number(message.sceneItemRenderSize)');
+    expect(renderer.body).toContain("if(copy.T==='model')copy.T='Raster'");
+    await app.close();
+  });
+
+  it('uses the model layer as the temporary scene preview', async () => {
+    const root = await fixture();
+    const pod = path.join(root, 'products', '123', 'pod');
+    await fs.mkdir(path.join(pod, 'psdlayers'), { recursive: true });
+    await fs.writeFile(path.join(pod, 'psdlayers', 'background_600.png'), 'background');
+    await fs.writeFile(path.join(pod, 'psdlayers', 'model_600.png'), 'model-layer-is-larger');
+    await fs.writeFile(path.join(pod, 'scenes', 'all.json'), JSON.stringify({
+      'view-1': { psdFrames: [
+        { T: 'schema', N: 'background', F: 'background.png' },
+        { T: 'model', N: 'model', F: 'model.png' }
+      ] }
+    }));
+    const app = await buildApp({ assetsRoot: root, publicBaseUrl: 'http://test.local' });
+    const response = await app.inject({ url: '/v1/products/123/manifest' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().modes[0].views[0].previewUrl).toContain('/model_600.png?v=');
     await app.close();
   });
 
