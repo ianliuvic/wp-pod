@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import type { Design } from './schemas.js';
 
 export type StoredDesign = { id: string; createdAt: string; updatedAt: string; design: Design };
+export type StoredDesignPage = { designs: StoredDesign[]; total: number };
 
 export class DesignStore {
   private readonly pool: Pool | null;
@@ -66,6 +67,32 @@ export class DesignStore {
       createdAt: (row.created_at as Date).toISOString(),
       updatedAt: (row.updated_at as Date).toISOString(),
       design: row.design as Design,
+    };
+  }
+
+  async listCreatedBetween(since: Date, until: Date, limit: number, offset: number): Promise<StoredDesignPage> {
+    if (!this.pool) {
+      const matching = [...this.memory.values()]
+        .filter((record) => record.createdAt >= since.toISOString() && record.createdAt < until.toISOString())
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+      return { designs: matching.slice(offset, offset + limit), total: matching.length };
+    }
+    const result = await this.pool.query(
+      `SELECT id, created_at, updated_at, design, count(*) OVER()::int AS total
+       FROM ${this.tableName}
+       WHERE created_at >= $1 AND created_at < $2
+       ORDER BY created_at ASC, id ASC
+       LIMIT $3 OFFSET $4`,
+      [since.toISOString(), until.toISOString(), limit, offset]
+    );
+    return {
+      designs: result.rows.map((row) => ({
+        id: row.id,
+        createdAt: (row.created_at as Date).toISOString(),
+        updatedAt: (row.updated_at as Date).toISOString(),
+        design: row.design as Design,
+      })),
+      total: result.rows.length > 0 ? Number(result.rows[0].total) : 0,
     };
   }
 }

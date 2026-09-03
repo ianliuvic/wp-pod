@@ -131,6 +131,55 @@ describe('API', () => {
     await app.close();
   });
 
+  it('lists complete design JSON by creation time through the protected internal API', async () => {
+    const token = 'test-monitoring-token-that-is-long-enough';
+    const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local', monitoringToken: token });
+    const design = {
+      schemaVersion: 1,
+      productId: '123',
+      mode: 'all',
+      background: '#ffffff',
+      backgrounds: {},
+      layers: [{
+        id: 'layer-1', kind: 'text', sideId: 'side-1', text: 'Hongxiu', x: 0.5, y: 0.5,
+        scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, zIndex: 0
+      }],
+      quantities: {},
+      previews: ['https://images.yiswim.cloud/pod-designs/example.webp']
+    };
+    const saved = await app.inject({ method: 'POST', url: '/v1/designs', payload: design });
+    expect(saved.statusCode).toBe(201);
+    expect((await app.inject({ url: '/internal/designs?since=2020-01-01T00:00:00.000Z&until=2030-01-01T00:00:00.000Z' })).statusCode).toBe(401);
+    const response = await app.inject({
+      url: '/internal/designs?since=2020-01-01T00:00:00.000Z&until=2030-01-01T00:00:00.000Z&limit=1&offset=0',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json().total).toBe(1);
+    expect(response.json().hasMore).toBe(false);
+    expect(response.json().designs[0].design.layers[0].text).toBe('Hongxiu');
+    const outside = await app.inject({
+      url: '/internal/designs?since=2030-01-01T00:00:00.000Z&until=2031-01-01T00:00:00.000Z',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(outside.json().total).toBe(0);
+    expect((await app.inject({
+      url: '/internal/designs?since=2026-01-02T00:00:00.000Z&until=2026-01-01T00:00:00.000Z',
+      headers: { authorization: `Bearer ${token}` }
+    })).statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('reports an unconfigured internal design endpoint without exposing data', async () => {
+    const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local' });
+    const response = await app.inject({
+      url: '/internal/designs?since=2020-01-01T00:00:00.000Z&until=2030-01-01T00:00:00.000Z'
+    });
+    expect(response.statusCode).toBe(503);
+    await app.close();
+  });
+
   it('keeps Paintsand designs behind a dedicated authenticated store', async () => {
     const app = await buildApp({ assetsRoot: await fixture(), publicBaseUrl: 'http://test.local', paintsandApiKey: 'test-paintsand-key' });
     const design = {

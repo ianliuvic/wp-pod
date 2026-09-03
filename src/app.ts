@@ -19,6 +19,16 @@ const backgroundRemovalRequestSchema = z.object({
   image: z.string().max(8_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) || /^https:\/\//.test(value))
 });
 
+const internalDesignListQuerySchema = z.object({
+  since: z.string().datetime({ offset: true }),
+  until: z.string().datetime({ offset: true }),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+}).refine((query) => Date.parse(query.since) < Date.parse(query.until), {
+  message: 'since must be earlier than until',
+  path: ['since'],
+});
+
 export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; replicateApiToken?: string } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test', trustProxy: ['loopback', 'linklocal', 'uniquelocal'] });
   const monitoring = new MonitoringCollector();
@@ -51,6 +61,14 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (!paintsandApiKey) return reply.code(503).send({ error: 'paintsand_api_not_configured' });
     const supplied = typeof request.headers['x-paintsand-api-key'] === 'string' ? request.headers['x-paintsand-api-key'] : '';
     const expected = Buffer.from(paintsandApiKey);
+    const received = Buffer.from(supplied);
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
+    return null;
+  }
+  function verifyMonitoring(request: { headers: Record<string, unknown> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+    if (!monitoringToken) return reply.code(503).send({ error: 'monitoring_not_configured' });
+    const supplied = typeof request.headers.authorization === 'string' ? request.headers.authorization : '';
+    const expected = Buffer.from(`Bearer ${monitoringToken}`);
     const received = Buffer.from(supplied);
     if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
     return null;
@@ -100,12 +118,26 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   });
   app.get('/internal/metrics', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!monitoringToken) return reply.code(503).send({ error: 'monitoring_not_configured' });
-    const supplied = typeof request.headers.authorization === 'string' ? request.headers.authorization : '';
-    const expected = Buffer.from(`Bearer ${monitoringToken}`);
-    const received = Buffer.from(supplied);
-    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
+    const denied = verifyMonitoring(request, reply); if (denied) return denied;
     return monitoring.snapshot(fs.existsSync(assetsRoot) ? assetsRoot : process.cwd());
+  });
+  app.get<{ Querystring: Record<string, unknown> }>('/internal/designs', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const denied = verifyMonitoring(request, reply); if (denied) return denied;
+    const parsed = internalDesignListQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.flatten() });
+    const { since, until, limit, offset } = parsed.data;
+    const page = await designs.listCreatedBetween(new Date(since), new Date(until), limit, offset);
+    return {
+      since,
+      until,
+      count: page.designs.length,
+      total: page.total,
+      limit,
+      offset,
+      hasMore: offset + page.designs.length < page.total,
+      designs: page.designs,
+    };
   });
   app.get('/v1/products', { config: { rateLimit: rateLimitPolicy('wordpress', 'product-list', limits.productListMax, limits.windowMs) } }, async (_request, reply) => {
     reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
