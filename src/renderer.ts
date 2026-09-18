@@ -30,6 +30,7 @@ type PoolEntry = {
   busy: boolean;
   frameReady: boolean;
   renders: number;
+  retired?: boolean;
 };
 
 const RENDERER_FRAME_PATH = '/vendor/v3/renderer-frame.html?v=20260824-model-1';
@@ -75,6 +76,7 @@ export class MockupRenderer {
       queueLimit: number;
       renderTimeoutMs: number;
       cacheLimit: number;
+      maxRendersPerPage: number;
       log: FastifyBaseLogger;
     }
   ) {}
@@ -158,6 +160,23 @@ export class MockupRenderer {
     entry.busy = false;
     const next = this.waiters.shift();
     if (next) next();
+  }
+
+  /**
+   * 丢弃一个页面（关闭并移出池子）。
+   *
+   * 必要性：复用同一个页面反复 init/render 会让引擎/WebGL 状态退化 —— 实测跑一段时间后
+   * 连 700px 的渲染都会等满 45 秒超时，重启进程才恢复。所以
+   * ①失败时直接丢整页（别在坏页面上继续）；
+   * ②成功渲染到上限后主动回收换新页。
+   */
+  private async retire(entry: PoolEntry) {
+    if (entry.retired) return;
+    entry.retired = true;
+    const index = this.pool.indexOf(entry);
+    if (index >= 0) this.pool.splice(index, 1);
+    await entry.page.close().catch(() => undefined);
+    this.opts.log.info({ renders: entry.renders, poolSize: this.pool.length }, 'mockup renderer: page recycled');
   }
 
   private async ensureFrame(entry: PoolEntry) {
@@ -272,19 +291,16 @@ export class MockupRenderer {
       entry.renders++;
       if (this.cache.size >= this.opts.cacheLimit) this.cache.clear();
       this.cache.set(key, snapshot);
+      // 跑够次数就换新页，避免长期复用导致引擎状态退化
+      if (entry.renders >= this.opts.maxRendersPerPage) await this.retire(entry);
       return snapshot;
     } catch (error) {
-      // 失败时丢弃该页面，下次重新导航，避免坏状态粘住
-      entry.frameReady = false;
-      try {
-        await entry.page.goto('about:blank', { timeout: 15000 });
-      } catch {
-        /* ignore */
-      }
+      // 失败时直接丢弃整页，下次重新导航 + 重建，别在坏状态上继续
+      await this.retire(entry);
       throw error;
     } finally {
       this.inflight--;
-      this.release(entry);
+      if (!entry.retired) this.release(entry);
     }
   }
 
