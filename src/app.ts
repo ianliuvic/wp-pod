@@ -99,6 +99,54 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const vendorRoot = path.resolve('public/vendor');
   if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, preCompressed: true, setHeaders: setVendorCacheHeaders });
 
+  // ── 素材缩略图：GET /thumbs/<相对路径>?w=96[&v=版本] ─────────────────────────
+  // 用途：替代「拿 1200x1200 原图当 40px 列表缩略图」的浪费 —— 下载从每张 20~77KB
+  // 降到约 1~3KB，解码位图从 5.5MB 降到几十 KB。原始 /assets/ 路径完全不变，
+  // 画布仍用全尺寸遮罩；sharp 不可用或处理失败时 302 回退到原图（行为等同改造前）。
+  const thumbCache = new Map<string, Buffer>();
+  let sharpModule: ((input: string) => any) | null | undefined;
+  app.get('/thumbs/*', async (request, reply) => {
+    const relative = decodeURIComponent(String((request.params as Record<string, string>)['*'] ?? ''));
+    const query = request.query as Record<string, unknown>;
+    const requested = Number(query.w);
+    const width = Number.isFinite(requested) ? Math.min(512, Math.max(16, Math.round(requested))) : 96;
+    const rootResolved = path.resolve(assetsRoot);
+    const absolute = path.resolve(rootResolved, relative);
+    if (absolute !== rootResolved && !absolute.startsWith(rootResolved + path.sep)) {
+      return reply.code(400).send({ error: 'invalid path' });
+    }
+    if (!/\.(png|jpe?g|webp)$/i.test(absolute)) return reply.code(400).send({ error: 'unsupported type' });
+    const fallback = `/assets/${relative.split('/').map(encodeURIComponent).join('/')}`;
+
+    const key = `${absolute}@${width}@${String(query.v ?? '')}`;
+    const cached = thumbCache.get(key);
+    if (cached) {
+      return reply.header('Cache-Control', 'public, max-age=31536000, immutable').type('image/webp').send(cached);
+    }
+    if (sharpModule === undefined) {
+      try {
+        const mod = await import('sharp');
+        sharpModule = ((mod as any).default ?? mod) as (input: string) => any;
+      } catch (error) {
+        app.log.warn({ err: error }, 'sharp unavailable; /thumbs falls back to originals');
+        sharpModule = null;
+      }
+    }
+    if (!sharpModule) return reply.redirect(fallback);
+    try {
+      const buffer = await sharpModule(absolute)
+        .resize(width, width, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer();
+      if (thumbCache.size >= 1024) thumbCache.clear();
+      thumbCache.set(key, buffer);
+      return reply.header('Cache-Control', 'public, max-age=31536000, immutable').type('image/webp').send(buffer);
+    } catch (error) {
+      app.log.warn({ err: error, absolute }, 'thumbnail generation failed; falling back to original');
+      return reply.redirect(fallback);
+    }
+  });
+
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
     if (request.headers['x-api-key'] !== config.API_KEY) return reply.code(401).send({ error: 'unauthorized' });
