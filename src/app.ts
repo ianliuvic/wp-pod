@@ -10,10 +10,11 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
-import { designSchema, renderRequestSchema } from './schemas.js';
+import { designSchema, renderRequestSchema, renderPreviewSchema } from './schemas.js';
 import { MonitoringCollector } from './monitoring.js';
 import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
 import { removeImageBackground } from './background-removal.js';
+import { MockupRenderer } from './renderer.js';
 
 const backgroundRemovalRequestSchema = z.object({
   image: z.string().max(8_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) || /^https:\/\//.test(value))
@@ -73,6 +74,29 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return reply.code(401).send({ error: 'unauthorized' });
     return null;
   }
+  // 服务端 mockup 渲染器：懒加载，第一次真正需要时才启动 Chromium
+  let rendererInstance: MockupRenderer | null = null;
+  function getRenderer(): MockupRenderer {
+    if (!rendererInstance) {
+      rendererInstance = new MockupRenderer({
+        localOrigin: `http://127.0.0.1:${config.PORT}`,
+        executablePath: config.CHROMIUM_PATH,
+        concurrency: config.RENDER_MAX_CONCURRENCY,
+        queueLimit: config.RENDER_QUEUE_LIMIT,
+        renderTimeoutMs: config.RENDER_TIMEOUT_MS,
+        cacheLimit: config.RENDER_CACHE_LIMIT,
+        log: app.log
+      });
+      app.log.info(
+        { concurrency: config.RENDER_MAX_CONCURRENCY, queueLimit: config.RENDER_QUEUE_LIMIT, timeoutMs: config.RENDER_TIMEOUT_MS },
+        'server-side mockup renderer enabled'
+      );
+    }
+    return rendererInstance;
+  }
+  app.addHook('onClose', async () => {
+    if (rendererInstance) await rendererInstance.close();
+  });
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
   await app.register(fastifyRateLimit, { global: false });
   function setAssetCacheHeaders(reply: FastifyReply, filePath: string): void {
@@ -162,7 +186,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   });
   app.get('/health', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { status: 'ok', service: 'wp-pod', version: '0.1.0', assetsMounted: fs.existsSync(assetsRoot) };
+    return {
+      status: 'ok',
+      service: 'wp-pod',
+      version: '0.1.0',
+      assetsMounted: fs.existsSync(assetsRoot),
+      renderer: config.renderEnabled ? (rendererInstance ? rendererInstance.stats() : 'idle') : 'disabled'
+    };
   });
   app.get('/internal/metrics', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -261,15 +291,49 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const record = await paintsandDesigns.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
-  app.post('/v1/renders', { config: { rateLimit: rateLimitPolicy('wordpress', 'render', limits.renderMax, limits.windowMs) } }, async (request, reply) => {
-    reply.header('Cache-Control', 'no-store');
-    const parsed = renderRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'invalid_render_request', issues: parsed.error.flatten() });
-    return reply.code(501).send({
-      error: 'renderer_not_configured',
-      message: 'Manifest loading and design validation are ready. The local Vetrina-compatible renderer adapter is the next implementation step.'
-    });
-  });
+  app.post(
+    '/v1/renders',
+    // 请求体会带若干张压平设计面（WebP dataURL），默认 1MB 不够
+    { bodyLimit: 12 * 1024 * 1024 },
+    async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+
+      // ① 新的预览路径：客户端直接给出压平设计面，服务器代跑引擎
+      const preview = renderPreviewSchema.safeParse(request.body);
+      if (preview.success) {
+        if (!config.renderEnabled) {
+          return reply.code(503).send({ error: 'render_disabled', message: 'server-side rendering is disabled' });
+        }
+        const startedAt = Date.now();
+        try {
+          const image = await getRenderer().render({
+            sceneUrl: preview.data.sceneUrl,
+            viewId: preview.data.viewId,
+            cdnPrefix: preview.data.cdnPrefix,
+            sides: preview.data.sides,
+            surfaces: preview.data.surfaces,
+            outputSize: preview.data.outputSize
+          });
+          return { image, outputSize: preview.data.outputSize, elapsedMs: Date.now() - startedAt };
+        } catch (error) {
+          request.log.warn({ err: error }, 'server-side mockup render failed');
+          const message = error instanceof Error ? error.message : 'render_failed';
+          const code = message === 'renderer_overloaded' ? 503 : 502;
+          return reply.code(code).send({ error: message === 'renderer_overloaded' ? 'renderer_overloaded' : 'render_failed', message });
+        }
+      }
+
+      // ② 旧的按设计稿渲染路径：保留 501，等真正实现
+      const parsed = renderRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_render_request', issues: preview.error.flatten() });
+      }
+      return reply.code(501).send({
+        error: 'renderer_not_configured',
+        message: 'The design-payload render path is not implemented yet. Use the surfaces preview payload instead.'
+      });
+    }
+  );
   app.setErrorHandler((error, _request, reply) => {
     const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 500;
     if (statusCode === 429) {
