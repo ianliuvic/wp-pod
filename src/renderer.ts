@@ -168,15 +168,19 @@ export class MockupRenderer {
       `<!doctype html><html><body style="margin:0"><iframe id="rf" src="${origin}${RENDERER_FRAME_PATH}" style="width:1200px;height:900px;border:0"></iframe></body></html>`,
       { waitUntil: 'load', timeout: 60000 }
     );
-    await entry.page.waitForFunction(
-      () => {
-        const f = document.getElementById('rf') as HTMLIFrameElement | null;
-        return !!f && !!f.contentWindow && !!f.contentDocument;
-      },
-      { timeout: 30000 }
-    );
-    // 等引擎 JS 加载完成（外壳页会发 loaded；这里用轮询兜底）
-    await entry.page.waitForTimeout(600);
+    // 等引擎真正就绪：外壳页会执行 SDSWebpackRequire 并暴露 window.SDSVetrina。
+    // 只等 iframe onload 是不够的 —— 那时 postMessage 还没有监听者，init 会丢。
+    await entry.page
+      .waitForFunction(
+        () => {
+          const frame = document.getElementById('rf') as HTMLIFrameElement | null;
+          if (!frame || !frame.contentWindow) return false;
+          const w = frame.contentWindow as unknown as Record<string, unknown>;
+          return typeof w.SDSVetrina !== 'undefined';
+        },
+        { timeout: 60000, polling: 250 }
+      )
+      .catch(() => undefined);
     entry.frameReady = true;
   }
 
