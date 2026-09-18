@@ -85,10 +85,11 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
         queueLimit: config.RENDER_QUEUE_LIMIT,
         renderTimeoutMs: config.RENDER_TIMEOUT_MS,
         cacheLimit: config.RENDER_CACHE_LIMIT,
+        maxRendersPerPage: config.RENDER_MAX_RENDERS_PER_PAGE,
         log: app.log
       });
       app.log.info(
-        { concurrency: config.RENDER_MAX_CONCURRENCY, queueLimit: config.RENDER_QUEUE_LIMIT, timeoutMs: config.RENDER_TIMEOUT_MS },
+        { concurrency: config.RENDER_MAX_CONCURRENCY, queueLimit: config.RENDER_QUEUE_LIMIT, timeoutMs: config.RENDER_TIMEOUT_MS, maxRendersPerPage: config.RENDER_MAX_RENDERS_PER_PAGE },
         'server-side mockup renderer enabled'
       );
     }
