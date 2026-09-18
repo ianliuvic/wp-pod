@@ -97,6 +97,38 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   app.addHook('onClose', async () => {
     if (rendererInstance) await rendererInstance.close();
   });
+
+  /** 服务端 mockup 预览：客户端 WebGL 不可用时由服务器代跑 SDS 引擎 */
+  async function handlePreviewRender(
+    body: unknown,
+    log: { warn: (obj: unknown, msg: string) => void },
+    reply: { code: (n: number) => { send: (b: unknown) => unknown }; send: (b: unknown) => unknown }
+  ) {
+    const preview = renderPreviewSchema.safeParse(body);
+    if (!preview.success) {
+      return reply.code(400).send({ error: 'invalid_render_preview', issues: preview.error.flatten() });
+    }
+    if (!config.renderEnabled) {
+      return reply.code(503).send({ error: 'render_disabled', message: 'server-side rendering is disabled' });
+    }
+    const startedAt = Date.now();
+    try {
+      const image = await getRenderer().render({
+        sceneUrl: preview.data.sceneUrl,
+        viewId: preview.data.viewId,
+        cdnPrefix: preview.data.cdnPrefix,
+        sides: preview.data.sides,
+        surfaces: preview.data.surfaces,
+        outputSize: preview.data.outputSize
+      });
+      return reply.send({ image, outputSize: preview.data.outputSize, elapsedMs: Date.now() - startedAt });
+    } catch (error) {
+      log.warn({ err: error }, 'server-side mockup render failed');
+      const message = error instanceof Error ? error.message : 'render_failed';
+      const overloaded = message === 'renderer_overloaded';
+      return reply.code(overloaded ? 503 : 502).send({ error: overloaded ? 'renderer_overloaded' : 'render_failed', message });
+    }
+  }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
   await app.register(fastifyRateLimit, { global: false });
   function setAssetCacheHeaders(reply: FastifyReply, filePath: string): void {
@@ -234,6 +266,19 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
     return reply.code(201).send(await designs.upsert(parsed.data));
   });
+  // 客户端 WebGL 不可用时的兜底：由服务器代跑 SDS 引擎出图。
+  // 走 App Proxy（/apps/pod-api/renders → /v1/shopify/renders），用签名校验，
+  // 不设 rate-limit —— 真流量保护由渲染器自身的并发槽位 + 队列上限 + 缓存承担。
+  app.post<{ Querystring: Record<string, unknown> }>(
+    '/v1/shopify/renders',
+    { bodyLimit: 12 * 1024 * 1024 },
+    async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const denied = verifyShopifyProxy(request, reply);
+      if (denied) return denied;
+      return handlePreviewRender(request.body, request.log, reply);
+    }
+  );
   app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/remove-background', { bodyLimit: 8_100_000, config: { rateLimit: rateLimitPolicy('shopify', 'background-removal', limits.renderMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
@@ -297,33 +342,11 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     { bodyLimit: 12 * 1024 * 1024 },
     async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
-
-      // ① 新的预览路径：客户端直接给出压平设计面，服务器代跑引擎
+      // 优先走「压平设计面」预览路径；失败再落到旧的按设计稿渲染路径
       const preview = renderPreviewSchema.safeParse(request.body);
       if (preview.success) {
-        if (!config.renderEnabled) {
-          return reply.code(503).send({ error: 'render_disabled', message: 'server-side rendering is disabled' });
-        }
-        const startedAt = Date.now();
-        try {
-          const image = await getRenderer().render({
-            sceneUrl: preview.data.sceneUrl,
-            viewId: preview.data.viewId,
-            cdnPrefix: preview.data.cdnPrefix,
-            sides: preview.data.sides,
-            surfaces: preview.data.surfaces,
-            outputSize: preview.data.outputSize
-          });
-          return { image, outputSize: preview.data.outputSize, elapsedMs: Date.now() - startedAt };
-        } catch (error) {
-          request.log.warn({ err: error }, 'server-side mockup render failed');
-          const message = error instanceof Error ? error.message : 'render_failed';
-          const code = message === 'renderer_overloaded' ? 503 : 502;
-          return reply.code(code).send({ error: message === 'renderer_overloaded' ? 'renderer_overloaded' : 'render_failed', message });
-        }
+        return handlePreviewRender(request.body, request.log, reply);
       }
-
-      // ② 旧的按设计稿渲染路径：保留 501，等真正实现
       const parsed = renderRequestSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_render_request', issues: preview.error.flatten() });
