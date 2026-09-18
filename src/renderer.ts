@@ -162,24 +162,14 @@ export class MockupRenderer {
 
   private async ensureFrame(entry: PoolEntry) {
     if (entry.frameReady) return;
-    await entry.page.goto('about:blank');
     const origin = this.opts.localOrigin;
-    await entry.page.setContent(
-      `<!doctype html><html><body style="margin:0"><iframe id="rf" src="${origin}${RENDERER_FRAME_PATH}" style="width:1200px;height:900px;border:0"></iframe></body></html>`,
-      { waitUntil: 'load', timeout: 60000 }
-    );
-    // 等引擎真正就绪：外壳页会执行 SDSWebpackRequire 并暴露 window.SDSVetrina。
-    // 只等 iframe onload 是不够的 —— 那时 postMessage 还没有监听者，init 会丢。
+    // 直接导航到渲染器页，不套 iframe：
+    // 用 setContent 造宿主页会把 document origin 变成 "null"，导致读不到同源 iframe 里的
+    // SDSVetrina（实测报 SecurityError）。直接导航则 window.parent === window，
+    // postMessage 发给自己即可，引擎的回包也在同一个 window 上收到。
+    await entry.page.goto(`${origin}${RENDERER_FRAME_PATH}`, { waitUntil: 'load', timeout: 60000 });
     await entry.page
-      .waitForFunction(
-        () => {
-          const frame = document.getElementById('rf') as HTMLIFrameElement | null;
-          if (!frame || !frame.contentWindow) return false;
-          const w = frame.contentWindow as unknown as Record<string, unknown>;
-          return typeof w.SDSVetrina !== 'undefined';
-        },
-        { timeout: 60000, polling: 250 }
-      )
+      .waitForFunction(() => typeof (window as unknown as Record<string, unknown>).SDSVetrina !== 'undefined', { timeout: 60000, polling: 200 })
       .catch(() => undefined);
     entry.frameReady = true;
   }
@@ -189,8 +179,6 @@ export class MockupRenderer {
     const localOrigin = this.opts.localOrigin;
     return entry.page.evaluate(
       async (args: { sceneUrl: string; viewId: string; cdnPrefix: string; sides: RenderSide[]; surfaces: RenderSurface[]; outputSize: number; timeoutMs: number }) => {
-        const frame = document.getElementById('rf') as HTMLIFrameElement;
-        const win = frame.contentWindow as Window;
         const token = Math.floor(Math.random() * 1e9) + 1;
 
         const waitFor = (type: string, ms: number) =>
@@ -211,7 +199,7 @@ export class MockupRenderer {
           });
 
         const readyWait = waitFor('ready', args.timeoutMs);
-        win.postMessage(
+        window.postMessage(
           {
             source: 'hxpd-host',
             type: 'init',
@@ -229,7 +217,7 @@ export class MockupRenderer {
         await readyWait;
 
         const renderedWait = waitFor('rendered', args.timeoutMs);
-        win.postMessage(
+        window.postMessage(
           {
             source: 'hxpd-host',
             type: 'render',
@@ -286,10 +274,10 @@ export class MockupRenderer {
       this.cache.set(key, snapshot);
       return snapshot;
     } catch (error) {
-      // 失败时丢弃该页面，下次重建，避免坏状态粘住
+      // 失败时丢弃该页面，下次重新导航，避免坏状态粘住
       entry.frameReady = false;
       try {
-        await entry.page.goto('about:blank');
+        await entry.page.goto('about:blank', { timeout: 15000 });
       } catch {
         /* ignore */
       }
