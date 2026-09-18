@@ -97,7 +97,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   }
   if (fs.existsSync(assetsRoot)) await app.register(fastifyStatic, { root: assetsRoot, prefix: '/assets/', decorateReply: false, setHeaders: setAssetCacheHeaders });
   const vendorRoot = path.resolve('public/vendor');
-  if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, setHeaders: setVendorCacheHeaders });
+  if (fs.existsSync(vendorRoot)) await app.register(fastifyStatic, { root: vendorRoot, prefix: '/vendor/', decorateReply: false, preCompressed: true, setHeaders: setVendorCacheHeaders });
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
