@@ -9,6 +9,9 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+# 服务端 mockup 渲染用的无头 Chromium。服务器没有 GPU，靠 Chromium 自带的
+# SwiftShader 软件渲染跑 WebGL（实测单张 ~0.4s，4 vCPU 预计 1~2s）。
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
