@@ -20,13 +20,22 @@ const schema = z.object({
   RATE_LIMIT_RENDER_MAX: z.coerce.number().int().positive().default(10),
   SHOPIFY_API_SECRET: z.string().optional(),
   SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com'),
-  DATABASE_URL: z.string().url().optional()
+  DATABASE_URL: z.string().url().optional(),
+  // ── 服务端 mockup 渲染（客户端 WebGL 不可用时的兜底）──
+  // 服务器无 GPU，靠 Chromium 自带的 SwiftShader 软件渲染。
+  RENDER_ENABLED: z.enum(['true', 'false']).default('true'),
+  CHROMIUM_PATH: z.string().optional(),
+  RENDER_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  RENDER_QUEUE_LIMIT: z.coerce.number().int().min(0).max(200).default(24),
+  RENDER_TIMEOUT_MS: z.coerce.number().int().min(5000).max(180000).default(45000),
+  RENDER_CACHE_LIMIT: z.coerce.number().int().min(0).max(4096).default(96)
 });
 
 const parsed = schema.parse(process.env);
 export const config = {
   ...parsed,
   assetsRoot: path.resolve(parsed.POD_ASSETS_ROOT),
+  renderEnabled: parsed.RENDER_ENABLED === 'true',
   corsOrigins: parsed.CORS_ORIGINS.split(',').map((x) => x.trim()).filter(Boolean),
   rateLimits: {
     windowMs: parsed.RATE_LIMIT_WINDOW_MS,
