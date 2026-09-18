@@ -28,7 +28,10 @@ const schema = z.object({
   RENDER_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   RENDER_QUEUE_LIMIT: z.coerce.number().int().min(0).max(200).default(24),
   RENDER_TIMEOUT_MS: z.coerce.number().int().min(5000).max(180000).default(45000),
-  RENDER_CACHE_LIMIT: z.coerce.number().int().min(0).max(4096).default(96)
+  RENDER_CACHE_LIMIT: z.coerce.number().int().min(0).max(4096).default(96),
+  // 单个页面渲染多少次后就回收换新页。复用太久引擎/WebGL 状态会退化，
+  // 表现为渲染超时（实测跑一段时间后连 700px 都等满 45s）。
+  RENDER_MAX_RENDERS_PER_PAGE: z.coerce.number().int().min(1).max(10000).default(25)
 });
 
 const parsed = schema.parse(process.env);
