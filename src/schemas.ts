@@ -59,4 +59,42 @@ export const renderRequestSchema = z.object({
   design: designSchema,
   viewIds: z.array(z.string()).optional()
 });
+
+/**
+ * 服务端 mockup 预览请求。
+ * 客户端 WebGL 不可用时，把当前设计的「压平设计面」（surfaceData 输出的 WebP dataURL）
+ * 直接交给服务器，由服务器代跑 SDS 引擎出图。
+ * 字段与客户端 postMessage 给引擎的参数一一对应。
+ */
+export const renderPreviewSchema = z.object({
+  productId: z.string().regex(/^\d+$/),
+  modeKind: z.enum(['all', 'single']),
+  viewId: z.string().min(1).max(80),
+  sceneUrl: z.string().url().max(2000),
+  cdnPrefix: z.string().url().max(2000),
+  sides: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(120),
+        name: z.string().max(200).optional(),
+        width: z.number().positive().max(4000),
+        height: z.number().positive().max(4000)
+      })
+    )
+    .min(1)
+    .max(40),
+  surfaces: z
+    .array(
+      z.object({
+        sideId: z.string().min(1).max(120),
+        surface: z.string().startsWith('data:image/').max(6_000_000),
+        width: z.number().positive().max(4000),
+        height: z.number().positive().max(4000)
+      })
+    )
+    .min(1)
+    .max(40),
+  outputSize: z.number().int().min(200).max(1400).default(700)
+});
+export type RenderPreview = z.infer<typeof renderPreviewSchema>;
 export type Design = z.infer<typeof designSchema>;
