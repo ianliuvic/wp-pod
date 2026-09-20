@@ -1,0 +1,62 @@
+{
+  "upstreamBuild": "v1789733095269",
+  "buildComment": "9/18/2026, 8:04:55 PM",
+  "rendererModuleId": 1007,
+  "scope": "Only engine bundles; retain existing export and local formatter adapters. No UI, scene, cropping or rendering parameter changes.",
+  "files": [
+    {
+      "file": "public/vendor/sds-app-runtime.js",
+      "source": "https://cdn-static.sdspod.com/v1789733095269/js/app.8a3533aadb933362491e.js",
+      "previousSha256": "99d112e16d29c7fb2c94b4bb212ac836d840ba946f3fa767d4e1d4b661f8955e",
+      "upstreamSha256": "ab77f30ff88fb88f9ae4509f8e7ad840d58aca9b368b2be99adda98783ef4819",
+      "installedSha256": "dbfd46c4fa5bdb697b5c7d6a74b6891a7c34b50b3cfea0dd6f2abc04c008c982",
+      "patches": [
+        {
+          "from": "var O=S;return r(r.s=723)",
+          "to": "var O=S;return window.SDSWebpackRequire=r,r"
+        }
+      ]
+    },
+    {
+      "file": "public/vendor/sds-vetrina-chunk.js",
+      "source": "https://cdn-static.sdspod.com/v1789733095269/js/18.c2916d9b4dea533dd3b7.js",
+      "previousSha256": "d0d0c0900770f9b325246c1eb9b291fbcd06a599f9e9a5e1302836e3c59abe63",
+      "upstreamSha256": "28b7fa262a0b9604c8366109ce3ed7afb2f4548fcf26e08920e8afc64728e26d",
+      "installedSha256": "5b459e2f11c655379e52c93c95fd02cc4d9e7102154182c3e620a685c5be99d0",
+      "patches": [
+        {
+          "from": "D=D.default}()})}).call(this,H(304),H(481).Buffer,H(302)(tr))",
+          "to": "D=D.default,window.SDSVetrina=D.Vetrina}()})}).call(this,H(304),H(481).Buffer,H(302)(tr))"
+        },
+        {
+          "from": "fetch(\"https://static-photo-center-prov.oss-cn-hangzhou.aliyuncs.com/static/favicon.ico\")",
+          "to": "fetch(\"assets/sds-scene/vetrina-formatter.ico\")"
+        }
+      ]
+    },
+    {
+      "file": "public/vendor/assets/sds-scene/vetrina-formatter.ico",
+      "source": "https://static-photo-center-prov.oss-cn-hangzhou.aliyuncs.com/static/favicon.ico",
+      "previousSha256": "1db1fb18004338766614ba4ffc2024a2a93590d30587063e33ee98f51265ef4a",
+      "upstreamSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "installedSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "patches": []
+    },
+    {
+      "file": "public/vendor/v2/assets/sds-scene/vetrina-formatter.ico",
+      "source": "https://static-photo-center-prov.oss-cn-hangzhou.aliyuncs.com/static/favicon.ico",
+      "previousSha256": "1db1fb18004338766614ba4ffc2024a2a93590d30587063e33ee98f51265ef4a",
+      "upstreamSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "installedSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "patches": []
+    },
+    {
+      "file": "public/vendor/v3/assets/sds-scene/vetrina-formatter.ico",
+      "source": "https://static-photo-center-prov.oss-cn-hangzhou.aliyuncs.com/static/favicon.ico",
+      "previousSha256": "1db1fb18004338766614ba4ffc2024a2a93590d30587063e33ee98f51265ef4a",
+      "upstreamSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "installedSha256": "ef827c91108f2cf52e5ae3caf0a02b44db6adf1b51373e4e805673e16555145d",
+      "patches": []
+    }
+  ]
+}
