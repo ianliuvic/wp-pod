@@ -10,7 +10,9 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
-import { designSchema, renderRequestSchema, renderPreviewSchema } from './schemas.js';
+import { IntakeStore } from './intake-store.js';
+import { designSchema, renderRequestSchema, renderPreviewSchema, intakeSchema, intakeOrderSchema, intakeSdsSchema } from './schemas.js';
+import { intakeOpsPage } from './ops-page.js';
 import { MonitoringCollector } from './monitoring.js';
 import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
 import { removeImageBackground } from './background-removal.js';
@@ -38,8 +40,10 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const assetStore = new AssetStore(assetsRoot, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
   const designs = new DesignStore(config.DATABASE_URL, 'designs');
   const paintsandDesigns = new DesignStore(config.DATABASE_URL, 'paintsand_designs');
+  const intakes = new IntakeStore(config.DATABASE_URL, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
   await designs.init();
   await paintsandDesigns.init();
+  await intakes.init();
   const paintsandApiKey = options.paintsandApiKey ?? config.PAINTSAND_API_KEY;
   const monitoringToken = options.monitoringToken ?? config.MONITORING_TOKEN;
   const replicateApiToken = options.replicateApiToken ?? config.REPLICATE_API_TOKEN;
@@ -132,6 +136,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   }
   await app.register(cors, { origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)) });
   await app.register(fastifyRateLimit, { global: false });
+  /* 保留原始 JSON 文本：Shopify webhook 的 HMAC 要用原始 body 算 */
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
+    (request as unknown as { rawBody?: string }).rawBody = body as string;
+    try { done(null, JSON.parse(body as string)); }
+    catch (error) { (error as { statusCode?: number }).statusCode = 400; done(error as Error, undefined); }
+  });
   function setAssetCacheHeaders(reply: FastifyReply, filePath: string): void {
     const ext = path.extname(filePath).toLowerCase();
     if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.psd'].includes(ext)) {
@@ -358,6 +369,135 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       });
     }
   );
+  /* ---------- POD 设计拍平输入（intakes）：保存 / 订单绑定 / SDS 队列 -------------- */
+  app.post<{ Body: unknown }>('/v1/intakes', { bodyLimit: 16_000_000, config: { rateLimit: rateLimitPolicy('wordpress', 'intake-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const parsed = intakeSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_intake', issues: parsed.error.flatten() });
+    try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
+    const record = await intakes.create({
+      designId: parsed.data.designId ?? null,
+      productId: parsed.data.productId,
+      productName: parsed.data.productName ?? null,
+      modeKind: parsed.data.mode.kind,
+      templateName: parsed.data.mode.templateName ?? null,
+      shopifyDomain: parsed.data.shopifyDomain ?? null,
+      source: parsed.data.source ?? null,
+      sides: parsed.data.sides,
+      design: parsed.data.design,
+      meta: parsed.data.meta
+    });
+    return reply.code(201).send(record);
+  });
+  app.post<{ Querystring: Record<string, unknown>; Body: unknown }>('/v1/shopify/intakes', { bodyLimit: 16_000_000, config: { rateLimit: rateLimitPolicy('shopify', 'intake-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+    const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    reply.header('Cache-Control', 'no-store');
+    const parsed = intakeSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_intake', issues: parsed.error.flatten() });
+    try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
+    return reply.code(201).send(await intakes.create({
+      designId: parsed.data.designId ?? null,
+      productId: parsed.data.productId,
+      productName: parsed.data.productName ?? null,
+      modeKind: parsed.data.mode.kind,
+      templateName: parsed.data.mode.templateName ?? null,
+      shopifyDomain: parsed.data.shopifyDomain ?? null,
+      source: parsed.data.source ?? 'designer_live',
+      sides: parsed.data.sides,
+      design: parsed.data.design,
+      meta: parsed.data.meta
+    }));
+  });
+  app.get<{ Querystring: { status?: string; date?: string; productId?: string; limit?: string; offset?: string } }>('/v1/intakes', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const query = request.query ?? {};
+    return intakes.list({
+      status: query.status || null,
+      date: query.date || null,
+      productId: query.productId || null,
+      limit: query.limit ? Number(query.limit) : 50,
+      offset: query.offset ? Number(query.offset) : 0
+    });
+  });
+  app.get<{ Querystring: { days?: string; date?: string } }>('/v1/intakes/stats', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const query = request.query ?? {};
+    const stats = await intakes.stats({ days: query.days ? Number(query.days) : 14, date: query.date || null });
+    return Object.assign({ persistent: intakes.persistent, generatedAt: new Date().toISOString() }, stats);
+  });
+  app.get<{ Params: { intakeId: string } }>('/v1/intakes/:intakeId', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const record = await intakes.get(request.params.intakeId);
+    return record ?? reply.code(404).send({ error: 'intake_not_found' });
+  });
+  app.get<{ Params: { intakeId: string; sideId: string } }>('/v1/intakes/:intakeId/sides/:sideId', async (request, reply) => {
+    const sideId = request.params.sideId.replace(/\.png$/i, '');
+    const side = await intakes.sideBytes(request.params.intakeId, sideId);
+    if (!side) return reply.code(404).send({ error: 'intake_side_not_found' });
+    reply.header('Content-Type', side.mime);
+    reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+    return reply.send(side.bytes);
+  });
+  app.post<{ Params: { intakeId: string }; Body: unknown }>('/v1/intakes/:intakeId/orders', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const parsed = intakeOrderSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_intake_order', issues: parsed.error.flatten() });
+    const order = await intakes.addOrder(request.params.intakeId, parsed.data);
+    if (!order) return reply.code(404).send({ error: 'intake_not_found' });
+    return reply.code(201).send(order);
+  });
+  app.post<{ Params: { intakeId: string }; Body: unknown }>('/v1/intakes/:intakeId/sds', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const parsed = intakeSdsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_sds_patch', issues: parsed.error.flatten() });
+    const record = await intakes.setSds(request.params.intakeId, parsed.data);
+    if (!record) return reply.code(404).send({ error: 'intake_not_found' });
+    return record;
+  });
+  /* 真实购买回写：Shopify orders/create（或 orders/paid）webhook。
+     线路已接好（HMAC 校验 + 按 line item properties 里的 _pod_intake_id 绑定尺码/数量），
+     等真的要上线时再到 Shopify 注册 webhook 即可；测试阶段用 POST /v1/intakes/:id/orders 模拟。 */
+  app.post<{ Body: { id?: number | string; name?: string; line_items?: Array<Record<string, unknown>> } }>('/v1/shopify/orders-webhook', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_webhook_not_configured' });
+    const supplied = typeof request.headers['x-shopify-hmac-sha256'] === 'string' ? request.headers['x-shopify-hmac-sha256'] : '';
+    const rawBody = (request as unknown as { rawBody?: string }).rawBody ?? '';
+    if (!supplied || !rawBody) return reply.code(401).send({ error: 'missing_webhook_hmac' });
+    const expected = crypto.createHmac('sha256', config.SHOPIFY_API_SECRET).update(rawBody, 'utf8').digest('base64');
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
+      return reply.code(401).send({ error: 'invalid_webhook_hmac' });
+    }
+    const order = request.body ?? {};
+    let bound = 0;
+    const skipped: string[] = [];
+    for (const line of order.line_items ?? []) {
+      const properties = Array.isArray(line.properties) ? (line.properties as Array<{ name?: string; value?: string }>) : [];
+      const pick = (needle: string) => properties.find((item) => String(item?.name ?? '').toLowerCase() === needle)?.value ?? null;
+      const intakeId = pick('_pod_intake_id');
+      const designId = pick('_pod_design_id');
+      const size = pick('size') ?? (typeof line.variant_title === 'string' ? line.variant_title : null);
+      const quantity = Number(line.quantity) || 0;
+      const target = intakeId ? intakeId : designId ? (await intakes.getByDesignId(designId))?.id ?? null : null;
+      if (!target) { skipped.push(String(line.id ?? '')); continue; }
+      const created = await intakes.addOrder(target, {
+        size,
+        quantity,
+        orderId: order.id == null ? null : String(order.id),
+        orderName: order.name ?? null,
+        variantId: line.variant_id == null ? null : String(line.variant_id),
+        lineItemId: line.id == null ? null : String(line.id),
+        source: 'webhook',
+        raw: { properties }
+      });
+      if (created) bound += 1;
+    }
+    return { bound, skipped };
+  });
+  app.get('/ops/intakes', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    return intakeOpsPage();
+  });
   app.setErrorHandler((error, _request, reply) => {
     const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 500;
     if (statusCode === 429) {

@@ -98,3 +98,45 @@ export const renderPreviewSchema = z.object({
 });
 export type RenderPreview = z.infer<typeof renderPreviewSchema>;
 export type Design = z.infer<typeof designSchema>;
+
+/** 设计器「拍平」提交：每个版片一张 PNG（data URL），加模式等信息 */
+export const intakeSideSchema = z.object({
+  sideId: z.string().min(1).max(200),
+  name: z.string().max(200).nullable().optional(),
+  width: z.number().int().positive().max(30000).nullable().optional(),
+  height: z.number().int().positive().max(30000).nullable().optional(),
+  mime: z.string().max(64).nullable().optional(),
+  dataUrl: z.string().min(32).max(12_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value))
+});
+
+export const intakeSchema = z.object({
+  designId: z.string().max(200).nullable().optional(),
+  productId: z.string().regex(/^\d+$/),
+  productName: z.string().max(500).nullable().optional(),
+  mode: z.object({
+    kind: z.enum(['all', 'single']),
+    templateName: z.string().max(200).nullable().optional()
+  }),
+  shopifyDomain: z.string().max(200).nullable().optional(),
+  source: z.string().max(80).nullable().optional(),
+  sides: z.array(intakeSideSchema).min(1).max(24),
+  design: z.unknown().optional(),
+  meta: z.unknown().optional()
+});
+
+export const intakeOrderSchema = z.object({
+  size: z.string().max(50).nullable().optional(),
+  quantity: z.number().int().min(0).max(999).optional(),
+  orderId: z.string().max(100).nullable().optional(),
+  orderName: z.string().max(100).nullable().optional(),
+  variantId: z.string().max(100).nullable().optional(),
+  lineItemId: z.string().max(100).nullable().optional(),
+  source: z.enum(['simulate', 'cart', 'webhook', 'manual']).optional(),
+  raw: z.unknown().optional()
+});
+
+export const intakeSdsSchema = z.object({
+  status: z.enum(['pending', 'cart_added', 'failed', 'skipped']),
+  sds: z.unknown().optional(),
+  error: z.string().max(2000).nullable().optional()
+});

@@ -24,6 +24,28 @@ The service makes no runtime requests to SDS. Archived assets are mounted read-o
 | POST | `/v1/designs` | Validate and store a design document |
 | GET | `/v1/designs/:id` | Retrieve a stored design |
 | POST | `/v1/renders` | Reserved renderer entry point (currently `501`) |
+| POST | `/v1/intakes` | Store a flattened POD design (per-side PNG + mode) for later SDS ordering |
+| GET | `/v1/intakes` | List intakes (`status`, `date`, `productId`, `limit`, `offset`) |
+| GET | `/v1/intakes/stats` | Daily intake stats (`days`, `date`) — new vs. not-yet-pushed-to-SDS |
+| GET | `/v1/intakes/:id` | Intake detail incl. bound orders |
+| GET | `/v1/intakes/:id/sides/:sideId.png` | Flattened side PNG |
+| POST | `/v1/intakes/:id/orders` | Bind size/quantity (simulate now, `webhook` later) |
+| POST | `/v1/intakes/:id/sds` | Worker write-back (`cart_added` / `failed` / …) |
+| POST | `/v1/shopify/orders-webhook` | Reserved Shopify `orders/create` webhook (HMAC verified) |
+| GET | `/ops/intakes` | Read-only ops dashboard for daily intake stats |
+
+## POD intakes (设计拍平 → 与 SDS 交互)
+
+Designer "Complete design" stores one intake per design: the flattened PNG of every side, the
+mode (`all` / `single`), product and design ids. **No SDS interaction happens here** — a separate
+worker picks pending intakes up later and drives SDS (see `POD/_work/sds-inject-multipiece.js`).
+
+- Order binding: real purchases arrive through `/v1/shopify/orders-webhook`
+  (`line_item.properties._pod_intake_id` / `_pod_design_id` plus size/quantity). During testing use
+  `POST /v1/intakes/:id/orders` with `{"size":"M","quantity":2,"source":"simulate"}` — never touches Shopify.
+- Daily stats: `GET /v1/intakes/stats?days=14` (or the `/ops/intakes` page) shows per-day created /
+  pending / cart_added / failed / ordered counts, i.e. how much is still not pushed to SDS.
+- Side images live in Postgres (`pod_intakes_sides.bytes`), so no extra storage mount is required.
 
 ## Local development
 

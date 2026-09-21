@@ -34,7 +34,7 @@ describe('API', () => {
     expect(renderer.statusCode).toBe(200);
     expect(renderer.headers['cache-control']).toContain('stale-while-revalidate');
     expect(renderer.body).toContain('Number(message.sceneItemRenderSize)');
-    expect(renderer.body).toContain("if(copy.T==='model')copy.T='Raster'");
+    expect(renderer.body).toContain("if(copy.T==='model'||copy.T==='schema')copy.T='Raster'");
     await app.close();
   });
 
