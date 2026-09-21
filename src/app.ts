@@ -460,10 +460,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   app.post<{ Body: { id?: number | string; name?: string; line_items?: Array<Record<string, unknown>> } }>('/v1/shopify/orders-webhook', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_webhook_not_configured' });
+    /* webhook 由 Admin API 那个 app 投递，签名用的是它的 client secret；
+       app-proxy 用的 SHOPIFY_API_SECRET 可能是另一个 app，所以优先用专用变量。 */
+    const webhookSecret = config.SHOPIFY_WEBHOOK_SECRET || config.SHOPIFY_API_SECRET;
     const supplied = typeof request.headers['x-shopify-hmac-sha256'] === 'string' ? request.headers['x-shopify-hmac-sha256'] : '';
     const rawBody = (request as unknown as { rawBody?: string }).rawBody ?? '';
     if (!supplied || !rawBody) return reply.code(401).send({ error: 'missing_webhook_hmac' });
-    const expected = crypto.createHmac('sha256', config.SHOPIFY_API_SECRET).update(rawBody, 'utf8').digest('base64');
+    const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody, 'utf8').digest('base64');
     if (supplied.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
       return reply.code(401).send({ error: 'invalid_webhook_hmac' });
     }

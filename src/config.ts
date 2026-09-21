@@ -19,6 +19,9 @@ const schema = z.object({
   RATE_LIMIT_DESIGN_WRITE_MAX: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_RENDER_MAX: z.coerce.number().int().positive().default(10),
   SHOPIFY_API_SECRET: z.string().optional(),
+  /* Shopify webhook 的签名密钥：注册 webhook 的那个 app 的 client secret。
+     与 app-proxy 用的 SHOPIFY_API_SECRET 不一定是同一个 app，所以单独配。 */
+  SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
   SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com'),
   DATABASE_URL: z.string().url().optional(),
   // ── 服务端 mockup 渲染（客户端 WebGL 不可用时的兜底）──
