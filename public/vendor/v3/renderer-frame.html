@@ -27,6 +27,21 @@
   },false);
 })();
 </script>
+<script>
+(function(){
+  'use strict';
+  /* 移动端省显存：宿主可通过 URL 参数锁定帧内的 devicePixelRatio（fabric 的"视网膜加倍"会在
+     引擎初始化时读它，所以必须在引擎脚本之前设置）。默认不带参数 → 行为完全不变。 */
+  try{
+    var m=/[?&]dpr=(\d+(?:\.\d+)?)/.exec(location.search);
+    if(m){
+      var want=parseFloat(m[1]); if(!isFinite(want)||want<=0) want=1;
+      Object.defineProperty(window,'devicePixelRatio',{configurable:true,get:function(){return want}});
+      window.__hxDprForced=want;
+    }
+  }catch(e){}
+})();
+</script>
 </head>
 <body><canvas id="previewCanvas" width="500" height="500"></canvas><canvas id="highResCanvas" width="1500" height="1500" aria-hidden="true" style="position:fixed!important;left:-1200px!important;top:0!important;width:1000px!important;height:1000px!important;pointer-events:none!important"></canvas>
 <script src="../sds-libs.dll.js"></script><script src="../sds-core.dll.js"></script><script src="../sds-app-runtime.js"></script><script src="../sds-vetrina-chunk.js"></script>
