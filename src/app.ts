@@ -216,7 +216,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   });
 
   app.addHook('onRequest', async (request, reply) => {
-    if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
+    if (request.url.startsWith('/v1/shopify/') || request.url.startsWith('/v1/paintsand/') || request.url.startsWith('/debug/') || !config.API_KEY || request.url === '/health' || request.method === 'GET') return;
     if (request.headers['x-api-key'] !== config.API_KEY) return reply.code(401).send({ error: 'unauthorized' });
   });
   app.addHook('onRequest', async (request) => {
