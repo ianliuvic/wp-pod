@@ -1,33 +1,6 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f4f4f5}body{display:block;position:relative}.canvas-container{max-width:none!important;max-height:none!important}#previewCanvas{display:block;position:absolute;left:50%;top:50%;max-width:none!important;max-height:none!important;background:#fff;cursor:zoom-in}</style><script>
-(function(){
-  'use strict';
-  /* 移动端省显存：默认保留 #highResCanvas(1500²)；只有宿主明确说 mobile 才缩成 1×1（省约 8.6MB）。
-     不能用自己的 window.innerWidth 判断——那是 iframe 的宽度，不是页面宽度。 */
-  window.__hxHighResOff=false;
-  function highResCanvas(){ return document.getElementById('highResCanvas'); }
-  function shrinkHighRes(){
-    var c=highResCanvas(); if(!c) return false;
-    if(c.width===1&&c.height===1) return true;
-    try{ c.width=1; c.height=1; }catch(e){}
-    return true;
-  }
-  function applyMobile(off){
-    window.__hxHighResOff=!!off;
-    if(off){
-      if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',shrinkHighRes);
-      else shrinkHighRes();
-    }
-  }
-  try{ if(/[?&]mobile=1/.test(location.search)) applyMobile(true); }catch(e){}
-  addEventListener('message',function(e){
-    var m=e.data;
-    if(m&&m.source==='hxpd-host'&&m.type==='mobile-mode') applyMobile(!!m.mobile);
-  },false);
-})();
-</script>
-</head>
+<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f4f4f5}body{display:block;position:relative}.canvas-container{max-width:none!important;max-height:none!important}#previewCanvas{display:block;position:absolute;left:50%;top:50%;max-width:none!important;max-height:none!important;background:#fff;cursor:zoom-in}</style></head>
 <body><canvas id="previewCanvas" width="500" height="500"></canvas><canvas id="highResCanvas" width="1500" height="1500" aria-hidden="true" style="position:fixed!important;left:-1200px!important;top:0!important;width:1000px!important;height:1000px!important;pointer-events:none!important"></canvas>
 <script src="../sds-libs.dll.js"></script><script src="../sds-core.dll.js"></script><script src="../sds-app-runtime.js"></script><script src="../sds-vetrina-chunk.js"></script>
 <script>
@@ -88,7 +61,7 @@
   function showCanvas(canvas){engineCache.forEach(function(entry){canvasHost(entry.canvas).style.display=entry.canvas===canvas?'block':'none'});canvasHost(canvas).style.display='block'}
   function evictEngines(limit,currentKey){while(engineCache.size>limit){var oldestKey=null,oldest=Infinity;engineCache.forEach(function(entry,key){if(key!==currentKey&&entry.used<oldest){oldest=entry.used;oldestKey=key}});if(oldestKey===null)return;var entry=engineCache.get(oldestKey);engineCache.delete(oldestKey);releaseEntry(entry,true)}}
   async function activateScene(message){var sceneItemSize=Math.max(600,Math.min(1500,Number(message.sceneItemRenderSize)||1500)),scenes=await scenesFor(message.sceneUrl),scene=normalizeScene(scenes[message.viewId]),canvas=document.getElementById('previewCanvas');if(!scene)throw new Error('Preview scene not found: '+message.viewId);var standardW=Number(scene.width)||1000,standardH=Number(scene.height)||1000,displaySize=Math.max(120,Math.min(1000,Math.floor(Math.min(window.innerWidth,window.innerHeight))||500));previewSize=standardW;if(engine)try{engine.clear()}catch(e){}engineCache.clear();if(!canvas){canvas=document.createElement('canvas');canvas.id='previewCanvas';document.body.insertBefore(canvas,document.getElementById('highResCanvas'))}var nextEngine=new Renderer({id:'previewCanvas',type:'transform-scale',size:displaySize,standardWidth:standardW,standardHeight:standardH,platform:'sds',designCanvasSize:600,sceneItemRenderSize:sceneItemSize});nextEngine.CDN_PREFIX=message.cdnPrefix;var formatter=await formatterPayload();if(formatter)nextEngine.globalRespText=formatter;await withTimeout(nextEngine.initPreview({psdData:scene,designSideList:message.sides}),45000,'Preview engine init');engine=nextEngine;currentCanvas=document.getElementById('previewCanvas')||canvas;currentScene=scene;currentInit=message;currentSurface=null;try{var cw=currentCanvas.clientWidth||standardW,ch=currentCanvas.clientHeight||standardH;currentCanvas.style.marginLeft=(-cw/2)+'px';currentCanvas.style.marginTop=(-ch/2)+'px'}catch(e){}}
-  async function highResSnapshot(){if(window.__hxHighResOff)return'';if(highResBusy||!currentScene||!currentInit||!currentSurface)return'';highResBusy=true;var highEngine=null,canvas=document.getElementById('highResCanvas');try{highEngine=new Renderer({id:'highResCanvas',type:'fixed-size',size:1000,platform:'sds',designCanvasSize:600,sceneItemRenderSize:1500});highEngine.CDN_PREFIX=currentInit.cdnPrefix;await highEngine.initPreview({psdData:currentScene,designSideList:currentInit.sides});await waitForRender(canvas,highEngine.renderPreview(currentSurface),45000,'High-resolution render');await afterPaint();return canvas.toDataURL('image/png')}finally{try{if(highEngine)highEngine.clear()}catch(e){}highResBusy=false}}
+  async function highResSnapshot(){if(highResBusy||!currentScene||!currentInit||!currentSurface)return'';highResBusy=true;var highEngine=null,canvas=document.getElementById('highResCanvas');try{highEngine=new Renderer({id:'highResCanvas',type:'fixed-size',size:1000,platform:'sds',designCanvasSize:600,sceneItemRenderSize:1500});highEngine.CDN_PREFIX=currentInit.cdnPrefix;await highEngine.initPreview({psdData:currentScene,designSideList:currentInit.sides});await waitForRender(canvas,highEngine.renderPreview(currentSurface),45000,'High-resolution render');await afterPaint();return canvas.toDataURL('image/png')}finally{try{if(highEngine)highEngine.clear()}catch(e){}highResBusy=false}}
   async function sendHighRes(){reply('highres-loading');var image='';try{image=await highResSnapshot()}catch(e){}if(!image)try{image=snapshot()}catch(e){}reply('expand',{snapshot:image})}
   async function handleTask(message){var started=performance.now();if(message.type==='init'){var id=++serial;await activateScene(message);if(id===serial)reply('ready',{token:message.token,cached:engineCache.size>0,duration:Math.round(performance.now()-started)});return}if(message.type==='render'&&engine){var activeEngine=engine,activeCanvas=currentCanvas,specs=message.surfaces&&message.surfaces.length?message.surfaces:[message],decodedAt=performance.now(),payload=await Promise.all(specs.map(async function(spec){if(spec.layerSpec&&spec.surface){var full=await imageCanvas(spec.surface),layerSpec=(Number(spec.layerSpec.width)>0&&Number(spec.layerSpec.height)>0)?spec.layerSpec:{width:spec.width,height:spec.height};return{sideId:String(spec.sideId),cropedCanvas:cropCanvas(full,corpRectFor(activeEngine,layerSpec))}}return{sideId:String(spec.sideId),cropedCanvas:await imageCanvas(spec.surface,spec.width,spec.height)}})),renderedAt=performance.now(),timeout=Math.max(10000,Number(message.timeout)||30000),baseline=visualSignature(activeCanvas),expectsChange=surfaceHasVisibleDesign(payload);currentSurface=payload;await waitForRender(activeCanvas,activeEngine.renderPreview(payload),timeout,'Preview render',baseline,expectsChange);await afterPaint();var snapshotAt=performance.now(),image=snapshot(activeCanvas,message.outputSize,message.outputType,message.outputQuality);reply('rendered',{token:message.token,snapshot:image,crop:payload.map(function(item){try{return item.sideId+'='+item.cropedCanvas.width+'x'+item.cropedCanvas.height}catch(e){return item.sideId+'=?'}}).join(','),timing:{decode:Math.round(renderedAt-decodedAt),render:Math.round(snapshotAt-renderedAt),snapshot:Math.round(performance.now()-snapshotAt),total:Math.round(performance.now()-started)}})}}
   addEventListener('message',function(event){var message=event.data;if(!message||message.source!=='hxpd-host')return;if(message.type==='ping'){reply('loaded',{token:message.token});return}if(message.type==='preload'){preloadScenes(message).then(function(){reply('preloaded',{token:message.token})}).catch(function(error){reply('error',{message:String(error&&error.message||error),token:message.token})});return}if(message.type==='highres'){sendHighRes();return}taskQueue=taskQueue.then(function(){return handleTask(message)}).catch(function(error){reply('error',{message:String(error&&error.message||error),token:message.token})})});
