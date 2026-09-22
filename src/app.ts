@@ -348,6 +348,23 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const record = await paintsandDesigns.get(request.params.designId);
     return record ?? reply.code(404).send({ error: 'design_not_found' });
   });
+  /* 测试页（同一域名下的 debug 页面）用的渲染入口：不需要 API key，
+     但要求 Origin/Referer 指向本机（pod-api）域名，避免变成一个公开渲染服务。
+     用途：移动端不加载 worker 时，用后端把某个模式的各个视角渲出来填预览。 */
+  app.post<{ Body: unknown }>('/debug/renders', { bodyLimit: 12 * 1024 * 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const origin = String(request.headers.origin || '');
+    const referer = String(request.headers.referer || '');
+    const host = String(request.headers.host || '');
+    const selfHost = new URL(config.PUBLIC_BASE_URL).host;
+    const sameSite = (value: string) => value.includes(host) || value.includes(selfHost);
+    if ((origin && !sameSite(origin)) || (!origin && referer && !sameSite(referer))) {
+      return reply.code(403).send({ error: 'debug_render_not_same_origin' });
+    }
+    const preview = renderPreviewSchema.safeParse(request.body);
+    if (!preview.success) return reply.code(400).send({ error: 'invalid_render_request', issues: preview.error.flatten() });
+    return handlePreviewRender(request.body, request.log, reply);
+  });
   app.post(
     '/v1/renders',
     // 请求体会带若干张压平设计面（WebP dataURL），默认 1MB 不够
