@@ -17,6 +17,7 @@ import { MonitoringCollector } from './monitoring.js';
 import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
 import { removeImageBackground } from './background-removal.js';
 import { MockupRenderer } from './renderer.js';
+import { ImageAdvisory, validateAdvisoryImage, unavailable, type AdvisoryOptions } from './image-advisory.js';
 
 const backgroundRemovalRequestSchema = z.object({
   image: z.string().max(8_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) || /^https:\/\//.test(value))
@@ -32,7 +33,7 @@ const internalDesignListQuerySchema = z.object({
   path: ['since'],
 });
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; replicateApiToken?: string } = {}) {
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; replicateApiToken?: string; imageAdvisory?: AdvisoryOptions } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test', trustProxy: ['loopback', 'linklocal', 'uniquelocal'] });
   const monitoring = new MonitoringCollector();
   const requestStartedAt = new WeakMap<object, bigint>();
@@ -48,6 +49,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const monitoringToken = options.monitoringToken ?? config.MONITORING_TOKEN;
   const replicateApiToken = options.replicateApiToken ?? config.REPLICATE_API_TOKEN;
   const limits: RateLimitSettings = { ...config.rateLimits, ...options.rateLimits };
+  const imageAdvisory = new ImageAdvisory({ apiKey: config.DEEPSEEK_API_KEY, baseUrl: config.DEEPSEEK_BASE_URL, model: config.DEEPSEEK_MODEL, ...options.imageAdvisory });
   const backgroundRemovalCache = new Map<string, { image: string; expiresAt: number }>();
   const backgroundRemovalJobs = new Map<string, Promise<string>>();
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
@@ -291,6 +293,17 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       return handlePreviewRender(request.body, request.log, reply);
     }
   );
+  // Advisory only: this route is never called by upload, design, intake or production gates.
+  app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/check-image', { bodyLimit: 2_800_000, config: { rateLimit: rateLimitPolicy('shopify', 'image-advisory', 6, 60_000) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
+    const timestamp = Number(request.query.timestamp);
+    if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return reply.code(401).send(unavailable('expired_proxy_request'));
+    const parsed = z.object({ image: z.string() }).strict().safeParse(request.body);
+    if (!parsed.success || !validateAdvisoryImage(parsed.data.image)) return reply.code(400).send(unavailable('invalid_image'));
+    return imageAdvisory.check(parsed.data.image);
+  });
+
   app.post<{ Querystring: Record<string, unknown> }>('/v1/shopify/remove-background', { bodyLimit: 8_100_000, config: { rateLimit: rateLimitPolicy('shopify', 'background-removal', limits.renderMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;
