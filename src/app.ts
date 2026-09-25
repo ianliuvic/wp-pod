@@ -7,7 +7,7 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
-import { config } from './config.js';
+import { config, proxyShopSecrets } from './config.js';
 import { AssetStore } from './asset-store.js';
 import { DesignStore } from './design-store.js';
 import { IntakeStore } from './intake-store.js';
@@ -53,14 +53,14 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const backgroundRemovalCache = new Map<string, { image: string; expiresAt: number }>();
   const backgroundRemovalJobs = new Map<string, Promise<string>>();
   function verifyShopifyProxy(request: { query: unknown }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
-    if (!config.SHOPIFY_API_SECRET) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
+    if (!Object.keys(proxyShopSecrets).length) return reply.code(503).send({ error: 'shopify_proxy_not_configured' });
     const query = request.query as Record<string, unknown>;
     const signature = typeof query.signature === 'string' ? query.signature : '';
     const shop = typeof query.shop === 'string' ? query.shop.toLowerCase() : '';
-    const allowedShops = [config.SHOPIFY_SHOP_DOMAIN.toLowerCase(), 'w4ik1r-x5.myshopify.com'];
-    if (!signature || !allowedShops.includes(shop)) return reply.code(401).send({ error: 'invalid_shopify_proxy_request' });
+    const secret = proxyShopSecrets[shop];
+    if (!signature || !secret) return reply.code(401).send({ error: 'invalid_shopify_proxy_request' });
     const message = Object.keys(query).filter((key) => key !== 'signature').sort().map((key) => `${key}=${Array.isArray(query[key]) ? (query[key] as unknown[]).join(',') : String(query[key])}`).join('');
-    const expected = crypto.createHmac('sha256', config.SHOPIFY_API_SECRET).update(message).digest('hex');
+    const expected = crypto.createHmac('sha256', secret).update(message).digest('hex');
     if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return reply.code(401).send({ error: 'invalid_shopify_proxy_signature' });
     return null;
   }
