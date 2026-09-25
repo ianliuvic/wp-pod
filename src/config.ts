@@ -22,6 +22,10 @@ const schema = z.object({
   RATE_LIMIT_DESIGN_WRITE_MAX: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_RENDER_MAX: z.coerce.number().int().positive().default(10),
   SHOPIFY_API_SECRET: z.string().optional(),
+  /* Paintsand runs its own Shopify app, so its app-proxy requests are signed with
+     that app's client secret instead of the wearhongxiu one. */
+  PAINTSAND_SHOPIFY_API_SECRET: z.string().optional(),
+  PAINTSAND_SHOPIFY_SHOP_DOMAIN: z.string().default('paintsand-dev.myshopify.com'),
   /* Shopify webhook 的签名密钥：注册 webhook 的那个 app 的 client secret。
      与 app-proxy 用的 SHOPIFY_API_SECRET 不一定是同一个 app，所以单独配。 */
   SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -55,3 +59,18 @@ export const config = {
     renderMax: parsed.RATE_LIMIT_RENDER_MAX
   }
 };
+
+/* App-proxy requests are signed per shop: Shopify signs with the secret of the app
+   that owns the proxy, so each storefront needs its own secret here. */
+export const proxyShopSecrets: Record<string, string> = (() => {
+  const pairs: Array<[string, string | undefined]> = [
+    [parsed.SHOPIFY_SHOP_DOMAIN, parsed.SHOPIFY_API_SECRET],
+    ['w4ik1r-x5.myshopify.com', parsed.SHOPIFY_API_SECRET],
+    [parsed.PAINTSAND_SHOPIFY_SHOP_DOMAIN, parsed.PAINTSAND_SHOPIFY_API_SECRET]
+  ];
+  const out: Record<string, string> = {};
+  for (const [shop, secret] of pairs) {
+    if (shop && secret) out[shop.toLowerCase()] = secret;
+  }
+  return out;
+})();
