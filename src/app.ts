@@ -24,6 +24,7 @@ const backgroundRemovalRequestSchema = z.object({
 });
 
 const internalDesignListQuerySchema = z.object({
+  shop: z.string().min(1).max(200).optional(),
   since: z.string().datetime({ offset: true }),
   until: z.string().datetime({ offset: true }),
   limit: z.coerce.number().int().min(1).max(500).default(100),
@@ -64,6 +65,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return reply.code(401).send({ error: 'invalid_shopify_proxy_signature' });
     return null;
   }
+  /* The shop the app proxy signed for — verifyShopifyProxy() has already validated it. */
+  function proxyShopFrom(request: { query: unknown }): string | null {
+    const query = request.query as Record<string, unknown>;
+    const shop = typeof query?.shop === 'string' ? query.shop.trim().toLowerCase() : '';
+    return shop || null;
+  }
+
   function verifyPaintsand(request: { headers: Record<string, unknown> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
     if (!paintsandApiKey) return reply.code(503).send({ error: 'paintsand_api_not_configured' });
     const supplied = typeof request.headers['x-paintsand-api-key'] === 'string' ? request.headers['x-paintsand-api-key'] : '';
@@ -251,7 +259,8 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = internalDesignListQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.flatten() });
     const { since, until, limit, offset } = parsed.data;
-    const page = await designs.listCreatedBetween(new Date(since), new Date(until), limit, offset);
+      const shopFilter = (parsed.data as { shop?: string | null }).shop ?? null;
+    const page = await designs.listCreatedBetween(new Date(since), new Date(until), limit, offset, shopFilter);
     return {
       since,
       until,
@@ -278,7 +287,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(await designs.upsert(parsed.data));
+    return reply.code(201).send(await designs.upsert(parsed.data, proxyShopFrom(request)));
   });
   // 客户端 WebGL 不可用时的兜底：由服务器代跑 SDS 引擎出图。
   // 走 App Proxy（/apps/pod-api/renders → /v1/shopify/renders），用签名校验，
@@ -340,7 +349,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     const parsed = designSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_design', issues: parsed.error.flatten() });
     try { await assetStore.manifest(parsed.data.productId); } catch { return reply.code(404).send({ error: 'product_not_found' }); }
-    return reply.code(201).send(await designs.upsert(parsed.data));
+    return reply.code(201).send(await designs.upsert(parsed.data, proxyShopFrom(request)));
   });
   app.get<{ Params: { designId: string } }>('/v1/designs/:designId', { config: { rateLimit: rateLimitPolicy('wordpress', 'design-read', limits.designReadMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -411,7 +420,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       productName: parsed.data.productName ?? null,
       modeKind: parsed.data.mode.kind,
       templateName: parsed.data.mode.templateName ?? null,
-      shopifyDomain: parsed.data.shopifyDomain ?? null,
+      shopifyDomain: proxyShopFrom(request) ?? parsed.data.shopifyDomain ?? null,
       source: parsed.data.source ?? null,
       sides: parsed.data.sides,
       design: parsed.data.design,
