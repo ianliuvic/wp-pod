@@ -41,6 +41,19 @@ describe('advisory image checker', () => {
       expect(result).toMatchObject({ status: 'unavailable', possibleNsfw: null, advisoryOnly: true });
     }
   });
+  it('rejects truncated, refused, extra-field and oversized provider responses', async () => {
+    const cases = [
+      { choices: [{ finish_reason: 'length', message: { content: '{"possibleNsfw":false}' } }] },
+      { choices: [{ finish_reason: 'stop', message: { content: '{"possibleNsfw":false}', refusal: 'declined' } }] },
+      { choices: [{ finish_reason: 'stop', message: { content: '{"possibleNsfw":false,"extra":true}' } }] }
+    ];
+    for (const body of cases) {
+      const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(body)));
+      expect(await new ImageAdvisory({ apiKey: 'test', fetcher }).check(image)).toMatchObject({ status: 'unavailable', possibleNsfw: null, reason: 'invalid_response' });
+    }
+    const fetcher = vi.fn().mockResolvedValue(new Response('x'.repeat(32769)));
+    expect(await new ImageAdvisory({ apiKey: 'test', fetcher }).check(image)).toMatchObject({ reason: 'invalid_response' });
+  });
   it('bounds timeout and concurrent calls without queuing uploads', async () => {
     const fetcher = vi.fn().mockImplementation(() => new Promise(() => {}));
     const service = new ImageAdvisory({ apiKey: 'test', fetcher, timeoutMs: 15 });
@@ -77,6 +90,8 @@ describe('Shopify advisory route', () => {
       const checked = await app.inject({ method: 'POST', url: url(), payload: { image } });
       expect(checked.statusCode).toBe(200); expect(checked.json()).toMatchObject({ possibleNsfw: true, advisoryOnly: true });
       expect(checked.headers['cache-control']).toBe('no-store');
+      for (let i = 0; i < 2; i++) expect((await app.inject({ method: 'POST', url: url(), payload: { image } })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'POST', url: url(), payload: { image } })).statusCode).toBe(429);
       expect((await app.inject({ url: '/health' })).statusCode).toBe(200);
       expect(fetcher).toHaveBeenCalledTimes(1);
     } finally { await app.close(); config.SHOPIFY_API_SECRET = old; }
