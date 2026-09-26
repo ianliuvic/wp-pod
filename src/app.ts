@@ -19,6 +19,7 @@ import { rateLimitPolicy, type RateLimitSettings } from './rate-limits.js';
 import { removeImageBackground } from './background-removal.js';
 import { MockupRenderer } from './renderer.js';
 import { ImageAdvisory, validateAdvisoryImage, unavailable, type AdvisoryOptions } from './image-advisory.js';
+import { runShelfCheck } from './shelf.js';
 
 const backgroundRemovalRequestSchema = z.object({
   image: z.string().max(8_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) || /^https:\/\//.test(value))
@@ -299,6 +300,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       q: typeof query.q === 'string' ? query.q : null,
       category: typeof query.category === 'string' ? query.category : null,
       status: typeof query.status === 'string' ? query.status : null,
+      shelfStatus: typeof query.shelfStatus === 'string' ? query.shelfStatus : null,
       includeRemoved: query.includeRemoved === '1' || query.includeRemoved === 'true',
       limit: query.limit ? Number(query.limit) : 50,
       offset: query.offset ? Number(query.offset) : 0,
@@ -316,6 +318,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   app.post('/v1/catalog/refresh', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
     return refreshCatalog();
+  });
+  /* SDS 上下架检查：拉公开分类接口 → 与目录比对 → 落库（delisted/restored）→ 发飞书卡片。 */
+  app.post<{ Querystring: Record<string, unknown> }>('/v1/catalog/shelf-check', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const query = request.query ?? {};
+    const notify = query.notify !== '0' && query.notify !== 'false';
+    return runShelfCheck(catalog, { notify, log: (obj, msg) => app.log.info(obj, msg) });
   });
   app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', { config: { rateLimit: rateLimitPolicy('shopify', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;

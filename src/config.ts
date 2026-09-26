@@ -31,6 +31,10 @@ const schema = z.object({
   SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
   SHOPIFY_SHOP_DOMAIN: z.string().default('shop.wearhongxiu.com'),
   DATABASE_URL: z.string().url().optional(),
+  // 每周上下架检查的飞书通知（与 paintsand-pod-monitor 用同一应用/群）
+  FEISHU_APP_ID: z.string().optional(),
+  FEISHU_APP_SECRET: z.string().optional(),
+  FEISHU_CHAT_ID: z.string().optional(),
   // ── 服务端 mockup 渲染（客户端 WebGL 不可用时的兜底）──
   // 服务器无 GPU，靠 Chromium 自带的 SwiftShader 软件渲染。
   RENDER_ENABLED: z.enum(['true', 'false']).default('true'),

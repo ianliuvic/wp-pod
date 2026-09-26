@@ -1,12 +1,20 @@
 import { Pool } from 'pg';
 import type { CatalogSnapshotEntry } from './asset-store.js';
 
-export type CatalogEntry = CatalogSnapshotEntry & { inArchive: boolean; refreshedAt: string | null };
+export type CatalogEntry = CatalogSnapshotEntry & {
+  inArchive: boolean;
+  refreshedAt: string | null;
+  shelfStatus: 'listed' | 'delisted';
+  shelfCheckedAt: string | null;
+  delistedAt: string | null;
+  restoredAt: string | null;
+};
 
 export type CatalogListOptions = {
   q?: string | null;
   category?: string | null;
   status?: string | null;
+  shelfStatus?: string | null;
   includeRemoved?: boolean;
   limit?: number;
   offset?: number;
@@ -53,10 +61,21 @@ export class CatalogStore {
         source jsonb NOT NULL DEFAULT '{}'::jsonb,
         record_updated_at timestamptz,
         in_archive boolean NOT NULL DEFAULT true,
+        shelf_status text NOT NULL DEFAULT 'listed',
+        shelf_checked_at timestamptz,
+        delisted_at timestamptz,
+        restored_at timestamptz,
         refreshed_at timestamptz NOT NULL DEFAULT now()
       )
     `);
     await this.pool.query(`ALTER TABLE ${this.tableName} ADD COLUMN IF NOT EXISTS in_archive boolean NOT NULL DEFAULT true`);
+    await this.pool.query(`ALTER TABLE ${this.tableName} ADD COLUMN IF NOT EXISTS shelf_status text NOT NULL DEFAULT 'listed'`);
+    await this.pool.query(`ALTER TABLE ${this.tableName} ADD COLUMN IF NOT EXISTS shelf_checked_at timestamptz`);
+    await this.pool.query(`ALTER TABLE ${this.tableName} ADD COLUMN IF NOT EXISTS delisted_at timestamptz`);
+    await this.pool.query(`ALTER TABLE ${this.tableName} ADD COLUMN IF NOT EXISTS restored_at timestamptz`);
+    await this.pool.query(
+      `CREATE INDEX IF NOT EXISTS ${this.tableName}_shelf_idx ON ${this.tableName} (shelf_status)`,
+    );
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${this.categoriesTable} (
         product_id text NOT NULL REFERENCES ${this.tableName}(id) ON DELETE CASCADE,
@@ -76,16 +95,25 @@ export class CatalogStore {
   /** Rebuilds the index from an archive snapshot; products not present are kept and flagged. */
   async replaceAll(entries: CatalogSnapshotEntry[]): Promise<{ total: number; added: number; updated: number; removed: number }> {
     if (!this.pool) {
-      const previous = new Set(this.memory.keys());
+      const previous = new Map(this.memory);
       this.memory.clear();
       for (const entry of entries) {
-        this.memory.set(entry.id, { ...entry, inArchive: true, refreshedAt: new Date().toISOString() });
+        const before = previous.get(entry.id);
+        this.memory.set(entry.id, {
+          ...entry,
+          inArchive: true,
+          refreshedAt: new Date().toISOString(),
+          shelfStatus: before?.shelfStatus ?? 'listed',
+          shelfCheckedAt: before?.shelfCheckedAt ?? null,
+          delistedAt: before?.delistedAt ?? null,
+          restoredAt: before?.restoredAt ?? null,
+        });
       }
       return {
         total: entries.length,
         added: [...this.memory.keys()].filter((id) => !previous.has(id)).length,
         updated: entries.filter((entry) => previous.has(entry.id)).length,
-        removed: [...previous].filter((id) => !this.memory.has(id)).length,
+        removed: [...previous.keys()].filter((id) => !this.memory.has(id)).length,
       };
     }
     const client = await this.pool.connect();
@@ -161,6 +189,7 @@ export class CatalogStore {
       }
       if (options.category) items = items.filter((item) => item.categories.some((category) => String(category.id) === String(options.category)));
       if (options.status) items = items.filter((item) => item.status?.pod === options.status || item.status?.detail === options.status);
+      if (options.shelfStatus) items = items.filter((item) => item.shelfStatus === options.shelfStatus);
       items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
       return { total: items.length, items: items.slice(offset, offset + limit) };
     }
@@ -183,6 +212,10 @@ export class CatalogStore {
     if (options.status) {
       const status = push(options.status);
       where.push(`(p.status->>'pod' = ${status} OR p.status->>'detail' = ${status})`);
+    }
+    if (options.shelfStatus) {
+      const shelf = push(options.shelfStatus);
+      where.push(`p.shelf_status = ${shelf}`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const limitParam = push(limit);
@@ -252,6 +285,83 @@ export class CatalogStore {
     };
   }
 
+  /** All archived products with their current shelf state, for the weekly diff. */
+  async shelfSnapshot(): Promise<Array<{ id: string; name: string; shelfStatus: 'listed' | 'delisted'; categories: Array<{ id: string | null; label: string }> }>> {
+    if (!this.pool) {
+      return [...this.memory.values()]
+        .filter((item) => item.inArchive)
+        .map((item) => ({ id: item.id, name: item.name, shelfStatus: item.shelfStatus, categories: item.categories }));
+    }
+    const result = await this.pool.query(
+      `SELECT id, name, shelf_status, categories FROM ${this.tableName} WHERE in_archive = true`,
+    );
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      shelfStatus: row.shelf_status === 'delisted' ? 'delisted' : 'listed',
+      categories: (row.categories as Array<{ id: string | null; label: string }>) ?? [],
+    }));
+  }
+
+  /** Applies shelf transitions; timestamps only change on the actual transition. */
+  async applyShelfStatus(input: { delistedIds: string[]; restoredIds: string[] }): Promise<{ delisted: number; restored: number }> {
+    if (!this.pool) {
+      const now = new Date().toISOString();
+      let delisted = 0;
+      let restored = 0;
+      for (const id of input.delistedIds) {
+        const entry = this.memory.get(id);
+        if (!entry || entry.shelfStatus === 'delisted') continue;
+        entry.shelfStatus = 'delisted';
+        entry.delistedAt = entry.delistedAt ?? now;
+        entry.shelfCheckedAt = now;
+        delisted += 1;
+      }
+      for (const id of input.restoredIds) {
+        const entry = this.memory.get(id);
+        if (!entry || entry.shelfStatus !== 'delisted') continue;
+        entry.shelfStatus = 'listed';
+        entry.restoredAt = now;
+        entry.shelfCheckedAt = now;
+        restored += 1;
+      }
+      if (delisted || restored) {
+        for (const entry of this.memory.values()) entry.shelfCheckedAt = entry.shelfCheckedAt ?? now;
+      }
+      return { delisted, restored };
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const delisted = await client.query(
+        `UPDATE ${this.tableName}
+            SET shelf_status = 'delisted',
+                delisted_at = COALESCE(delisted_at, now()),
+                shelf_checked_at = now()
+          WHERE id = ANY($1::text[]) AND shelf_status <> 'delisted'`,
+        [input.delistedIds],
+      );
+      if (input.delistedIds.length) {
+        await client.query(`UPDATE ${this.tableName} SET shelf_checked_at = now() WHERE id = ANY($1::text[])`, [input.delistedIds]);
+      }
+      const restored = await client.query(
+        `UPDATE ${this.tableName}
+            SET shelf_status = 'listed',
+                restored_at = now(),
+                shelf_checked_at = now()
+          WHERE id = ANY($1::text[]) AND shelf_status = 'delisted'`,
+        [input.restoredIds],
+      );
+      await client.query('COMMIT');
+      return { delisted: delisted.rowCount ?? 0, restored: restored.rowCount ?? 0 };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private rowToEntry(row: Record<string, any>): CatalogEntry {
     return {
       id: String(row.id),
@@ -267,6 +377,10 @@ export class CatalogStore {
       recordUpdatedAt: row.record_updated_at ? (row.record_updated_at as Date).toISOString() : null,
       inArchive: row.in_archive !== false,
       refreshedAt: row.refreshed_at ? (row.refreshed_at as Date).toISOString() : null,
+      shelfStatus: row.shelf_status === 'delisted' ? 'delisted' : 'listed',
+      shelfCheckedAt: row.shelf_checked_at ? (row.shelf_checked_at as Date).toISOString() : null,
+      delistedAt: row.delisted_at ? (row.delisted_at as Date).toISOString() : null,
+      restoredAt: row.restored_at ? (row.restored_at as Date).toISOString() : null,
     };
   }
 }
