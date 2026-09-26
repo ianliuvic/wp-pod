@@ -6,14 +6,25 @@ type CaptureSide = { id: string; name?: string; previewWidth?: number; previewHe
 type CaptureMode = { kind: 'all' | 'single'; templateName?: string; prototypeGroupId?: string; sides?: CaptureSide[]; viewIds?: string[] };
 type Capture = { schemaVersion?: number; parentId: string; selectedProductId?: string; name?: string; detailUrl?: string; designUrl?: string; modes?: CaptureMode[] };
 type NormalizedSide = { id: string; width?: number; height?: number };
-type NormalizedMode = { name?: string; kind?: string; designSides?: NormalizedSide[] };
+type NormalizedMode = { name?: string; kind?: string; designSides?: NormalizedSide[]; views?: Array<{ previewPath?: string | null }> };
 type Normalized = { modes?: NormalizedMode[] };
+type ProductRecord = { categoryMemberships?: Array<{ id?: string; label?: string }> };
+export type ProductListEntry = {
+  id: string;
+  designProductId: string | null;
+  name: string;
+  modes: string[];
+  categories: Array<{ id: string | null; label: string }>;
+  thumbnailUrl: string | null;
+};
 
 export class AssetStore {
   constructor(private readonly root: string, private readonly publicBaseUrl: string) {}
 
   private sceneViewCache = new Map<string, { id: string; previewUrl: string | null }[]>();
   private assetVersionCache = new Map<string, { fingerprint: string; version: string }>();
+  private productListCache: { at: number; items: ProductListEntry[] } | null = null;
+  private static readonly PRODUCT_LIST_TTL_MS = 300_000;
 
   private productsRoot() { return path.join(this.root, 'products'); }
   private productRoot(id: string) {
@@ -21,7 +32,8 @@ export class AssetStore {
     return path.join(this.productsRoot(), id);
   }
   private assetUrl(id: string, relative: string) {
-    return `${this.publicBaseUrl.replace(/\/$/, '')}/assets/products/${id}/${relative.split(path.sep).map(encodeURIComponent).join('/')}`;
+    const segments = relative.split(/[\\/]+/).filter(Boolean).map(encodeURIComponent);
+    return `${this.publicBaseUrl.replace(/\/$/, '')}/assets/products/${id}/${segments.join('/')}`;
   }
   private async versionedAssetUrl(id: string, relative: string) {
     const absolute = path.join(this.productRoot(id), relative);
@@ -39,15 +51,80 @@ export class AssetStore {
       return this.assetUrl(id, relative);
     }
   }
-  async listProducts() {
+  /** Product catalogue with category memberships and a preview thumbnail. */
+  async listProducts(): Promise<ProductListEntry[]> {
+    const cached = this.productListCache;
+    if (cached && Date.now() - cached.at < AssetStore.PRODUCT_LIST_TTL_MS) return cached.items;
     const entries = await fs.readdir(this.productsRoot(), { withFileTypes: true });
-    const products = await Promise.all(entries.filter((x) => x.isDirectory() && /^\d+$/.test(x.name)).map(async (x) => {
-      try {
-        const capture = await this.readCapture(x.name);
-        return { id: x.name, designProductId: capture.selectedProductId ?? null, name: capture.name ?? x.name, modes: (capture.modes ?? []).map((m) => m.kind) };
-      } catch { return null; }
-    }));
-    return products.filter(Boolean);
+    const products = await Promise.all(
+      entries.filter((x) => x.isDirectory() && /^\d+$/.test(x.name)).map((x) => this.buildProductEntry(x.name)),
+    );
+    const items = products.filter((item): item is ProductListEntry => Boolean(item));
+    this.productListCache = { at: Date.now(), items };
+    return items;
+  }
+
+  private async buildProductEntry(id: string): Promise<ProductListEntry | null> {
+    try {
+      const capture = await this.readCapture(id);
+      const record = await this.readProductRecord(id);
+      const normalized = await this.readNormalized(id);
+      const categories = (record?.categoryMemberships ?? [])
+        .map((membership) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim() }))
+        .filter((membership) => membership.label.length > 0);
+      const thumbnailUrl = await this.resolveThumbnailUrl(id, normalized);
+      return {
+        id,
+        designProductId: capture.selectedProductId ?? null,
+        name: capture.name ?? id,
+        modes: (capture.modes ?? []).map((m) => m.kind),
+        categories,
+        thumbnailUrl,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async readProductRecord(id: string): Promise<ProductRecord | null> {
+    try {
+      return JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'record.json'), 'utf8')) as ProductRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readNormalized(id: string): Promise<Normalized | null> {
+    try {
+      return JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'normalized.json'), 'utf8')) as Normalized;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Prefer the archived default preview, then any file under pod/previews. */
+  private async resolveThumbnailUrl(id: string, normalized: Normalized | null): Promise<string | null> {
+    for (const mode of normalized?.modes ?? []) {
+      const previewPath = mode.views?.find((view) => view.previewPath)?.previewPath;
+      if (previewPath) return this.assetUrl(id, previewPath);
+    }
+    const fallback = await this.findPreviewFile(id);
+    return fallback ? this.assetUrl(id, fallback) : null;
+  }
+
+  private async findPreviewFile(id: string): Promise<string | null> {
+    try {
+      const root = path.join(this.productRoot(id), 'pod', 'previews');
+      const modes = await fs.readdir(root, { withFileTypes: true });
+      for (const mode of modes) {
+        if (!mode.isDirectory()) continue;
+        const files = (await fs.readdir(path.join(root, mode.name))).filter((file) => /\.(png|webp|jpe?g)$/i.test(file)).sort();
+        if (files.length) return path.join('pod', 'previews', mode.name, files[0]);
+      }
+    } catch {
+      /* no previews archived for this product */
+    }
+    return null;
   }
   async readCapture(id: string): Promise<Capture> {
     return JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'pod', 'capture.json'), 'utf8')) as Capture;
