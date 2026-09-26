@@ -9,6 +9,8 @@ type NormalizedSide = { id: string; name?: string | null; width?: number; height
 type NormalizedMode = { name?: string; kind?: string; designSides?: NormalizedSide[]; views?: Array<{ previewPath?: string | null }> };
 type Normalized = { modes?: NormalizedMode[] };
 type ProductRecord = {
+  name?: string;
+  selectedProductId?: string;
   categoryMemberships?: Array<{ id?: string; label?: string }>;
   status?: { detail?: string; pod?: string };
   validation?: Record<string, unknown>;
@@ -116,13 +118,18 @@ export class AssetStore {
 
   private async buildCatalogEntry(id: string): Promise<CatalogSnapshotEntry | null> {
     try {
-      const capture = await this.readCapture(id);
+      // Products without a POD capture (pod=unavailable) still belong in the
+      // index so collection statistics stay complete.
+      const capture = await this.readCapture(id).catch(() => null);
       const record = await this.readProductRecord(id);
-      const normalized = await this.readNormalized(id);
+      if (!capture && !record) return null;
+      const normalized = capture ? await this.readNormalized(id) : null;
       const categories = (record?.categoryMemberships ?? [])
         .map((membership) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim() }))
         .filter((membership) => membership.label.length > 0);
-      const thumbnailUrl = await this.resolveThumbnailUrl(id, normalized);
+      const thumbnailUrl = normalized
+        ? await this.resolveThumbnailUrl(id, normalized)
+        : await this.findPreviewFile(id).then((file) => (file ? this.assetUrl(id, file) : null));
       const printAreas = (normalized?.modes ?? []).map((mode) => ({
         mode: String(mode.name ?? mode.kind ?? 'all'),
         sides: (mode.designSides ?? []).map((side) => ({
@@ -134,9 +141,9 @@ export class AssetStore {
       }));
       return {
         id,
-        name: capture.name ?? id,
-        designProductId: capture.selectedProductId ?? null,
-        modes: (capture.modes ?? []).map((m) => m.kind),
+        name: capture?.name ?? record?.name ?? id,
+        designProductId: capture?.selectedProductId ?? record?.selectedProductId ?? null,
+        modes: (capture?.modes ?? []).map((m) => m.kind),
         categories,
         thumbnailUrl,
         printAreas,
