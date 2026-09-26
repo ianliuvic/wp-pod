@@ -5,10 +5,16 @@ import crypto from 'node:crypto';
 type CaptureSide = { id: string; name?: string; previewWidth?: number; previewHeight?: number; editorCanvas?: { width: number; height: number } };
 type CaptureMode = { kind: 'all' | 'single'; templateName?: string; prototypeGroupId?: string; sides?: CaptureSide[]; viewIds?: string[] };
 type Capture = { schemaVersion?: number; parentId: string; selectedProductId?: string; name?: string; detailUrl?: string; designUrl?: string; modes?: CaptureMode[] };
-type NormalizedSide = { id: string; width?: number; height?: number };
+type NormalizedSide = { id: string; name?: string | null; width?: number; height?: number };
 type NormalizedMode = { name?: string; kind?: string; designSides?: NormalizedSide[]; views?: Array<{ previewPath?: string | null }> };
 type Normalized = { modes?: NormalizedMode[] };
-type ProductRecord = { categoryMemberships?: Array<{ id?: string; label?: string }> };
+type ProductRecord = {
+  categoryMemberships?: Array<{ id?: string; label?: string }>;
+  status?: { detail?: string; pod?: string };
+  validation?: Record<string, unknown>;
+  urls?: { detail?: string; design?: string; sourceSearch?: string };
+  updatedAt?: string;
+};
 export type ProductListEntry = {
   id: string;
   designProductId: string | null;
@@ -16,6 +22,19 @@ export type ProductListEntry = {
   modes: string[];
   categories: Array<{ id: string | null; label: string }>;
   thumbnailUrl: string | null;
+};
+export type CatalogSnapshotEntry = {
+  id: string;
+  name: string;
+  designProductId: string | null;
+  modes: string[];
+  categories: Array<{ id: string | null; label: string }>;
+  thumbnailUrl: string | null;
+  printAreas: Array<{ mode: string; sides: Array<{ id: string; name: string | null; width: number | null; height: number | null }> }>;
+  status: { detail?: string; pod?: string };
+  validation: Record<string, unknown>;
+  source: { detail: string | null; design: string | null; search: string | null; capturedAt: string | null };
+  recordUpdatedAt: string | null;
 };
 
 export class AssetStore {
@@ -80,6 +99,56 @@ export class AssetStore {
         modes: (capture.modes ?? []).map((m) => m.kind),
         categories,
         thumbnailUrl,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Full structured snapshot of the archive for the catalogue index tables. */
+  async catalogSnapshot(): Promise<CatalogSnapshotEntry[]> {
+    const entries = await fs.readdir(this.productsRoot(), { withFileTypes: true });
+    const products = await Promise.all(
+      entries.filter((x) => x.isDirectory() && /^\d+$/.test(x.name)).map((x) => this.buildCatalogEntry(x.name)),
+    );
+    return products.filter((item): item is CatalogSnapshotEntry => Boolean(item));
+  }
+
+  private async buildCatalogEntry(id: string): Promise<CatalogSnapshotEntry | null> {
+    try {
+      const capture = await this.readCapture(id);
+      const record = await this.readProductRecord(id);
+      const normalized = await this.readNormalized(id);
+      const categories = (record?.categoryMemberships ?? [])
+        .map((membership) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim() }))
+        .filter((membership) => membership.label.length > 0);
+      const thumbnailUrl = await this.resolveThumbnailUrl(id, normalized);
+      const printAreas = (normalized?.modes ?? []).map((mode) => ({
+        mode: String(mode.name ?? mode.kind ?? 'all'),
+        sides: (mode.designSides ?? []).map((side) => ({
+          id: String(side.id),
+          name: side.name ?? null,
+          width: side.width ?? null,
+          height: side.height ?? null,
+        })),
+      }));
+      return {
+        id,
+        name: capture.name ?? id,
+        designProductId: capture.selectedProductId ?? null,
+        modes: (capture.modes ?? []).map((m) => m.kind),
+        categories,
+        thumbnailUrl,
+        printAreas,
+        status: { detail: record?.status?.detail, pod: record?.status?.pod },
+        validation: record?.validation ?? {},
+        source: {
+          detail: record?.urls?.detail ?? null,
+          design: record?.urls?.design ?? null,
+          search: record?.urls?.sourceSearch ?? null,
+          capturedAt: record?.updatedAt ?? null,
+        },
+        recordUpdatedAt: record?.updatedAt ?? null,
       };
     } catch {
       return null;

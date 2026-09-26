@@ -9,6 +9,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import { config, proxyShopSecrets } from './config.js';
 import { AssetStore } from './asset-store.js';
+import { CatalogStore } from './catalog-store.js';
 import { DesignStore } from './design-store.js';
 import { IntakeStore } from './intake-store.js';
 import { designSchema, renderRequestSchema, renderPreviewSchema, intakeSchema, intakeOrderSchema, intakeSdsSchema } from './schemas.js';
@@ -34,7 +35,7 @@ const internalDesignListQuerySchema = z.object({
   path: ['since'],
 });
 
-export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; replicateApiToken?: string; imageAdvisory?: AdvisoryOptions } = {}) {
+export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: string; paintsandApiKey?: string; monitoringToken?: string; rateLimits?: Partial<RateLimitSettings>; replicateApiToken?: string; imageAdvisory?: AdvisoryOptions; refreshCatalogOnStart?: boolean } = {}) {
   const app = Fastify({ logger: config.NODE_ENV !== 'test', trustProxy: ['loopback', 'linklocal', 'uniquelocal'] });
   const monitoring = new MonitoringCollector();
   const requestStartedAt = new WeakMap<object, bigint>();
@@ -43,9 +44,23 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   const designs = new DesignStore(config.DATABASE_URL, 'designs');
   const paintsandDesigns = new DesignStore(config.DATABASE_URL, 'paintsand_designs');
   const intakes = new IntakeStore(config.DATABASE_URL, options.publicBaseUrl ?? config.PUBLIC_BASE_URL);
+  const catalog = new CatalogStore(config.DATABASE_URL, 'pod_products');
   await designs.init();
   await paintsandDesigns.init();
   await intakes.init();
+  await catalog.init();
+  /** Rebuilds the queryable catalogue index from the file archive. */
+  async function refreshCatalog() {
+    const startedAt = Date.now();
+    const entries = await assetStore.catalogSnapshot();
+    const result = await catalog.replaceAll(entries);
+    const payload = { ...result, durationMs: Date.now() - startedAt, refreshedAt: new Date().toISOString() };
+    app.log.info(payload, 'catalog refreshed');
+    return payload;
+  }
+  if (options.refreshCatalogOnStart) {
+    void refreshCatalog().catch((error) => app.log.error({ err: error }, 'catalog refresh failed'));
+  }
   const paintsandApiKey = options.paintsandApiKey ?? config.PAINTSAND_API_KEY;
   const monitoringToken = options.monitoringToken ?? config.MONITORING_TOKEN;
   const replicateApiToken = options.replicateApiToken ?? config.REPLICATE_API_TOKEN;
@@ -275,6 +290,32 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   app.get('/v1/products', { config: { rateLimit: rateLimitPolicy('wordpress', 'product-list', limits.productListMax, limits.windowMs) } }, async (_request, reply) => {
     reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
     return { products: await assetStore.listProducts() };
+  });
+  /* 目录索引：由归档重建（pod_products / pod_products_categories 两张表）。 */
+  app.get<{ Querystring: Record<string, unknown> }>('/v1/catalog', { config: { rateLimit: rateLimitPolicy('wordpress', 'product-list', limits.productListMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600');
+    const query = request.query ?? {};
+    return catalog.list({
+      q: typeof query.q === 'string' ? query.q : null,
+      category: typeof query.category === 'string' ? query.category : null,
+      status: typeof query.status === 'string' ? query.status : null,
+      includeRemoved: query.includeRemoved === '1' || query.includeRemoved === 'true',
+      limit: query.limit ? Number(query.limit) : 50,
+      offset: query.offset ? Number(query.offset) : 0,
+    });
+  });
+  app.get('/v1/catalog/stats', async (_request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600');
+    return catalog.stats();
+  });
+  app.get<{ Params: { productId: string } }>('/v1/catalog/:productId', async (request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+    const entry = await catalog.get(request.params.productId);
+    return entry ?? reply.code(404).send({ error: 'product_not_found' });
+  });
+  app.post('/v1/catalog/refresh', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return refreshCatalog();
   });
   app.get<{ Querystring: Record<string, unknown>; Params: { productId: string } }>('/v1/shopify/manifest/:productId', { config: { rateLimit: rateLimitPolicy('shopify', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
     const denied = verifyShopifyProxy(request, reply); if (denied) return denied;

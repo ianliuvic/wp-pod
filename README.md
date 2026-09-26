@@ -20,6 +20,10 @@ The service makes no runtime requests to SDS. Archived assets are mounted read-o
 |---|---|---|
 | GET | `/health` | Service and asset-mount status |
 | GET | `/v1/products` | Products with captured POD data |
+| GET | `/v1/catalog` | Queryable catalogue index (`q`, `category`, `status`, `limit`, `offset`, `includeRemoved=1`) |
+| GET | `/v1/catalog/stats` | Counts per category and capture status |
+| GET | `/v1/catalog/:id` | One indexed product |
+| POST | `/v1/catalog/refresh` | Rebuild the index from the archive |
 | GET | `/v1/products/:id/manifest` | Canvas sizes, sides, masks, views and scenes |
 | POST | `/v1/designs` | Validate and store a design document |
 | GET | `/v1/designs/:id` | Retrieve a stored design |
