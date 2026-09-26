@@ -591,7 +591,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     reply.header('Content-Type', 'text/html; charset=utf-8');
     return intakeOpsPage();
   });
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 500;
     if (statusCode === 429) {
       return reply.code(429).send({
@@ -601,7 +601,13 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
         message: error instanceof Error ? error.message : 'Rate limit exceeded'
       });
     }
-    return reply.code(500).send({ error: 'internal_error', message: config.NODE_ENV === 'production' ? undefined : error instanceof Error ? error.message : String(error) });
+    if (statusCode >= 500) {
+      request.log.error({ err: error, url: request.url }, 'request failed');
+      return reply.code(statusCode).send({ error: 'internal_error', message: config.NODE_ENV === 'production' ? undefined : error instanceof Error ? error.message : String(error) });
+    }
+    /* Preserve client errors (400/401/404/413/415 …) instead of masking them as 500. */
+    const message = error instanceof Error ? error.message : String(error);
+    return reply.code(statusCode).send({ statusCode, error: message });
   });
   return app;
 }
