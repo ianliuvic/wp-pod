@@ -20,7 +20,7 @@ The service makes no runtime requests to SDS. Archived assets are mounted read-o
 |---|---|---|
 | GET | `/health` | Service and asset-mount status |
 | GET | `/v1/products` | Products with captured POD data |
-| GET | `/v1/catalog` | Queryable catalogue index (`q`, `category`, `status`, `shelfStatus`, `limit`, `offset`, `includeRemoved=1`) |
+| GET | `/v1/catalog` | Queryable catalogue index (`q`, `category`, `status`, `podStatus`, `shelfStatus`, `limit`, `offset`, `includeRemoved=1`) |
 | GET | `/v1/catalog/stats` | Counts per category and capture status |
 | GET | `/v1/catalog/:id` | One indexed product |
 | POST | `/v1/catalog/refresh` | Rebuild the index from the archive |

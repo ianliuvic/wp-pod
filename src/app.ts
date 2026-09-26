@@ -300,6 +300,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       q: typeof query.q === 'string' ? query.q : null,
       category: typeof query.category === 'string' ? query.category : null,
       status: typeof query.status === 'string' ? query.status : null,
+      podStatus: typeof query.podStatus === 'string' ? query.podStatus : null,
       shelfStatus: typeof query.shelfStatus === 'string' ? query.shelfStatus : null,
       includeRemoved: query.includeRemoved === '1' || query.includeRemoved === 'true',
       limit: query.limit ? Number(query.limit) : 50,

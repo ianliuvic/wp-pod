@@ -14,6 +14,7 @@ export type CatalogListOptions = {
   q?: string | null;
   category?: string | null;
   status?: string | null;
+  podStatus?: string | null;
   shelfStatus?: string | null;
   includeRemoved?: boolean;
   limit?: number;
@@ -189,6 +190,7 @@ export class CatalogStore {
       }
       if (options.category) items = items.filter((item) => item.categories.some((category) => String(category.id) === String(options.category)));
       if (options.status) items = items.filter((item) => item.status?.pod === options.status || item.status?.detail === options.status);
+      if (options.podStatus) items = items.filter((item) => item.status?.pod === options.podStatus);
       if (options.shelfStatus) items = items.filter((item) => item.shelfStatus === options.shelfStatus);
       items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
       return { total: items.length, items: items.slice(offset, offset + limit) };
@@ -212,6 +214,10 @@ export class CatalogStore {
     if (options.status) {
       const status = push(options.status);
       where.push(`(p.status->>'pod' = ${status} OR p.status->>'detail' = ${status})`);
+    }
+    if (options.podStatus) {
+      const podStatus = push(options.podStatus);
+      where.push(`p.status->>'pod' = ${podStatus}`);
     }
     if (options.shelfStatus) {
       const shelf = push(options.shelfStatus);
