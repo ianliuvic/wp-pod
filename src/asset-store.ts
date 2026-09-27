@@ -17,12 +17,15 @@ type ProductRecord = {
   urls?: { detail?: string; design?: string; sourceSearch?: string };
   updatedAt?: string;
 };
+type CategoryPathFile = {
+  categories?: Array<{ id?: string | number | null; label?: string; level?: number }>;
+};
 export type ProductListEntry = {
   id: string;
   designProductId: string | null;
   name: string;
   modes: string[];
-  categories: Array<{ id: string | null; label: string }>;
+  categories: Array<{ id: string | null; label: string; level?: number }>;
   thumbnailUrl: string | null;
 };
 export type CatalogSnapshotEntry = {
@@ -30,7 +33,7 @@ export type CatalogSnapshotEntry = {
   name: string;
   designProductId: string | null;
   modes: string[];
-  categories: Array<{ id: string | null; label: string }>;
+  categories: Array<{ id: string | null; label: string; level?: number }>;
   thumbnailUrl: string | null;
   printAreas: Array<{ mode: string; sides: Array<{ id: string; name: string | null; width: number | null; height: number | null }> }>;
   status: { detail?: string; pod?: string };
@@ -90,9 +93,7 @@ export class AssetStore {
       const capture = await this.readCapture(id);
       const record = await this.readProductRecord(id);
       const normalized = await this.readNormalized(id);
-      const categories = (record?.categoryMemberships ?? [])
-        .map((membership) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim() }))
-        .filter((membership) => membership.label.length > 0);
+      const categories = await this.resolveCategories(id, record);
       const thumbnailUrl = await this.resolveThumbnailUrl(id, normalized);
       return {
         id,
@@ -124,9 +125,7 @@ export class AssetStore {
       const record = await this.readProductRecord(id);
       if (!capture && !record) return null;
       const normalized = capture ? await this.readNormalized(id) : null;
-      const categories = (record?.categoryMemberships ?? [])
-        .map((membership) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim() }))
-        .filter((membership) => membership.label.length > 0);
+      const categories = await this.resolveCategories(id, record);
       const thumbnailUrl = normalized
         ? await this.resolveThumbnailUrl(id, normalized)
         : await this.findPreviewFile(id).then((file) => (file ? this.assetUrl(id, file) : null));
@@ -168,6 +167,33 @@ export class AssetStore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Category path per product: prefers the richer `categories.json`
+   * (top -> … -> leaf, produced from the SDS category tree) and falls back
+   * to record.json's membership (top level only).
+   */
+  private async resolveCategories(id: string, record: ProductRecord | null): Promise<Array<{ id: string | null; label: string; level?: number }>> {
+    try {
+      const raw = JSON.parse(await fs.readFile(path.join(this.productRoot(id), 'categories.json'), 'utf8')) as
+        | CategoryPathFile
+        | Array<{ id?: string | number | null; label?: string; level?: number }>;
+      const list = Array.isArray(raw) ? raw : raw.categories;
+      const cleaned = (list ?? [])
+        .map((category, index) => ({
+          id: category?.id == null ? null : String(category.id),
+          label: String(category?.label ?? '').trim(),
+          level: Number.isFinite(Number(category?.level)) ? Number(category?.level) : index,
+        }))
+        .filter((category) => category.label.length > 0);
+      if (cleaned.length) return cleaned;
+    } catch {
+      // fall through to the membership fallback
+    }
+    return (record?.categoryMemberships ?? [])
+      .map((membership, index) => ({ id: membership.id ?? null, label: String(membership.label ?? '').trim(), level: index }))
+      .filter((membership) => membership.label.length > 0);
   }
 
   private async readNormalized(id: string): Promise<Normalized | null> {
