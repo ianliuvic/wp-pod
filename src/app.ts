@@ -391,6 +391,31 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
       backgroundRemovalJobs.delete(key);
     }
   });
+  app.post('/v1/remove-background', { bodyLimit: 8_100_000, config: { rateLimit: rateLimitPolicy('wordpress', 'background-removal', limits.renderMax, limits.windowMs) } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const parsed = backgroundRemovalRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_background_removal_image' });
+    if (!replicateApiToken) return reply.code(503).send({ error: 'background_removal_not_configured' });
+    const key = crypto.createHash('sha256').update(parsed.data.image).digest('hex');
+    const cached = backgroundRemovalCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return { image: cached.image, cached: true };
+    let job = backgroundRemovalJobs.get(key);
+    if (!job) {
+      job = removeImageBackground(parsed.data.image, replicateApiToken);
+      backgroundRemovalJobs.set(key, job);
+    }
+    try {
+      const image = await job;
+      backgroundRemovalCache.set(key, { image, expiresAt: Date.now() + 45 * 60_000 });
+      return { image, cached: false };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message === 'replicate_timeout' || error instanceof DOMException && error.name === 'TimeoutError') return reply.code(504).send({ error: 'background_removal_timeout' });
+      return reply.code(502).send({ error: 'background_removal_unavailable' });
+    } finally {
+      backgroundRemovalJobs.delete(key);
+    }
+  });
   app.get<{ Params: { productId: string } }>('/v1/products/:productId/manifest', { config: { rateLimit: rateLimitPolicy('wordpress', 'manifest', limits.manifestMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
     try { return await assetStore.manifest(request.params.productId); }
