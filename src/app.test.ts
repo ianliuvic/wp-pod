@@ -32,7 +32,7 @@ describe('API', () => {
     expect(mode.sides[0].previewWidth).toBe(1042);
     const renderer = await app.inject({ url: '/vendor/v3/renderer-frame.html' });
     expect(renderer.statusCode).toBe(200);
-    expect(renderer.headers['cache-control']).toContain('stale-while-revalidate');
+    expect(renderer.headers['cache-control']).toBe('no-cache');
     expect(renderer.body).toContain('Number(message.sceneItemRenderSize)');
     expect(renderer.body).toContain("if(copy.T==='model'||copy.T==='schema')copy.T='Raster'");
     await app.close();
