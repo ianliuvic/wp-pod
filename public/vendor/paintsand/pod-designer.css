@@ -1397,7 +1397,7 @@
   font-family:"Futura Light","Futura Book","Trebuchet MS",Arial,sans-serif!important;
   color:#090909;
 }
-.pod-designer button,.pod-designer input,.pod-designer select,.pod-designer textarea{font-family:inherit!important}
+.pod-designer button:not(.pod-designer__font-picker-option),.pod-designer input,.pod-designer select,.pod-designer textarea{font-family:inherit!important}
 .pod-designer__dialog{border:1px solid #111!important;border-radius:0!important;box-shadow:0 28px 80px rgba(0,0,0,.2)!important}
 .pod-designer__header,.pod-designer__footer{border-color:#111!important}
 .pod-designer__product p,.pod-designer__preset-picker-header p{color:#767674!important;letter-spacing:.12em!important}
