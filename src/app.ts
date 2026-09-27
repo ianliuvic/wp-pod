@@ -185,7 +185,8 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico', '.woff', '.woff2', '.ttf'].includes(ext)) {
       reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     } else {
-      reply.header('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800');
+      // JS/CSS/HTML 可能随时更新（设计器等）：一律回源校验（fastify-static 带 ETag，通常 304）。
+      reply.header('Cache-Control', 'no-cache');
     }
     reply.header('Vary', 'Accept-Encoding');
   }
