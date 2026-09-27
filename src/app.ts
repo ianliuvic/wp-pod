@@ -171,6 +171,8 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
   });
   function setAssetCacheHeaders(reply: FastifyReply, filePath: string): void {
     const ext = path.extname(filePath).toLowerCase();
+    // Public archive assets are also fetched from the pod-orders designer origin.
+    reply.header('Access-Control-Allow-Origin', '*');
     if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.psd'].includes(ext)) {
       reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     } else if (ext === '.json') {
