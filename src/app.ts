@@ -488,7 +488,7 @@ export async function buildApp(options: { assetsRoot?: string; publicBaseUrl?: s
     }
   );
   /* ---------- POD 设计拍平输入（intakes）：保存 / 订单绑定 / SDS 队列 -------------- */
-  app.post<{ Body: unknown }>('/v1/intakes', { bodyLimit: 16_000_000, config: { rateLimit: rateLimitPolicy('wordpress', 'intake-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
+  app.post<{ Body: unknown }>('/v1/intakes', { bodyLimit: 128_000_000, config: { rateLimit: rateLimitPolicy('wordpress', 'intake-write', limits.designWriteMax, limits.windowMs) } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const parsed = intakeSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_intake', issues: parsed.error.flatten() });

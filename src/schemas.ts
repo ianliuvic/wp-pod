@@ -106,7 +106,7 @@ export const intakeSideSchema = z.object({
   width: z.number().int().positive().max(30000).nullable().optional(),
   height: z.number().int().positive().max(30000).nullable().optional(),
   mime: z.string().max(64).nullable().optional(),
-  dataUrl: z.string().min(32).max(12_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value))
+  dataUrl: z.string().min(32).max(64_000_000).refine((value) => /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value))
 });
 
 export const intakeSchema = z.object({
