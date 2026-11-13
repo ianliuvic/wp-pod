@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { productionSizes } from './production-sizes.js';
 
 type CaptureSide = { id: string; name?: string; previewWidth?: number; previewHeight?: number; editorCanvas?: { width: number; height: number } };
 type CaptureMode = { kind: 'all' | 'single'; templateName?: string; prototypeGroupId?: string; sides?: CaptureSide[]; viewIds?: string[] };
@@ -279,6 +280,7 @@ export class AssetStore {
         const normalizedSide = normalizedMode?.designSides?.find((item) => String(item.id) === String(side.id));
         return {
           ...side,
+          ...(productionSizes[`${id}:${mode.kind}:${side.id}`] ? { designSize: productionSizes[`${id}:${mode.kind}:${side.id}`] } : {}),
           previewWidth: normalizedSide?.width ?? side.previewWidth,
           previewHeight: normalizedSide?.height ?? side.previewHeight,
           maskUrl: await this.versionedAssetUrl(id, path.join('pod', 'masks', mode.kind, `${String(index + 1).padStart(2, '0')}_${side.id}.png`))
